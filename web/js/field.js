@@ -304,18 +304,25 @@ async function changeGear() {
   const row = (label, el) => box.append(h('div', { class: 'gf-row' }, h('label', {}, label), el));
   row('Mount', select(own('mount').map((id) => [id, GEAR[id].name]), rig.mount, (v) => { rig.mount = v; }));
   row('Optics', select(own('optic').map((id) => [id, GEAR[id].name]), rig.optic, (v) => { rig.optic = v; const o = GEAR[v]; if (o.zoom) rig.zoom = o.zoom[0]; rig.fstop = o.fMin || (o.fMinAt && o.fMinAt[0]); }));
-  row('Camera', select(own('camera').filter((id) => !GEAR[id].guideOnly).map((id) => [id, GEAR[id].name]), rig.camera, (v) => { rig.camera = v; }));
+  row('Camera', select(own('camera').filter((id) => !GEAR[id].guideOnly).map((id) => [id, GEAR[id].name]), rig.camera, (v) => { rig.camera = v; if (typeof wheelNote === 'function') wheelNote(); }));
   row('Corrector', select([['', 'none'], ...own('corrector').map((id) => [id, GEAR[id].name])], rig.corrector || '', (v) => { rig.corrector = v || null; }));
   row('Filter (in camera/drawer)', select([['', 'none'], ...own('filter').map((id) => [id, GEAR[id].name])], rig.filter || '', (v) => { rig.filter = v || null; }));
-  const wheelBox = h('div', { class: 'col' });
-  for (let i = 0; i < 7; i++) wheelBox.append(select([['', `slot ${i + 1}: empty`], ...own('filter').map((id) => [id, `slot ${i + 1}: ${GEAR[id].name}`])], (rig.wheel || [])[i] || '', (v) => { rig.wheel = rig.wheel || []; rig.wheel[i] = v || null; }));
-  if (inv.includes('wheel')) row('Filter wheel slots', wheelBox);
+  // The filter wheel is attached right here with its slots, so filling slots can't silently leave it off.
+  const setWheel = (on) => { rig.acc = (rig.acc || []).filter((x) => x !== 'wheel'); if (on) rig.acc.push('wheel'); wheelChk.checked = on; wheelNote(); };
+  const wheelChk = h('input', { type: 'checkbox', checked: (rig.acc || []).includes('wheel'), onchange: (e) => setWheel(e.target.checked) });
+  const wheelHint = h('div', { class: 'small warn' });
+  const wheelNote = () => { const mono = GEAR[rig.camera] && GEAR[rig.camera].mono; wheelHint.textContent = wheelChk.checked && !mono ? 'Filter wheels only work with mono cameras — pick a mono camera, or use the single filter slot above.' : ''; };
+  const wheelBox = h('div', { class: 'col' }, h('label', { class: 'chk' }, wheelChk, '7-position electronic filter wheel attached'), wheelHint);
+  for (let i = 0; i < 7; i++) wheelBox.append(select([['', `slot ${i + 1}: empty`], ...own('filter').map((id) => [id, `slot ${i + 1}: ${GEAR[id].name}`])], (rig.wheel || [])[i] || '', (v) => { rig.wheel = rig.wheel || []; rig.wheel[i] = v || null; if (v) setWheel(true); }));
+  if (inv.includes('wheel')) { row('Filter wheel', wheelBox); wheelNote(); }
   const accBox = h('div', { class: 'col' });
-  for (const a of ACCESSORIES) if (inv.includes(a.id) && !a.handheld) accBox.append(h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: (rig.acc || []).includes(a.id), onchange: (e) => { rig.acc = (rig.acc || []).filter((x) => x !== a.id); if (e.target.checked) rig.acc.push(a.id); } }), a.name));
+  for (const a of ACCESSORIES) if (inv.includes(a.id) && !a.handheld && a.id !== 'wheel') accBox.append(h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: (rig.acc || []).includes(a.id), onchange: (e) => { rig.acc = (rig.acc || []).filter((x) => x !== a.id); if (e.target.checked) rig.acc.push(a.id); } }), a.name));
   row('Accessories', accBox);
   const ok = await dialog({ title: 'Change gear', body: box, width: 520, buttons: [{ label: 'Cancel', value: false }, { label: 'Assemble', value: true, primary: true }] });
   if (!ok) return;
   applyRig(rig);
+  const warns = rigInfo(rig).warnings;
+  toast(warns.length ? `Rig assembled — ${warns.length} note${warns.length > 1 ? 's' : ''}: ${warns.join(' ')}` : 'Rig assembled. Reconnect devices in AstroCap → Equipment.', warns.length ? 'warn' : 'good', warns.length ? 9000 : 4000);
 }
 export function applyRig(rig) {
   S.setRig(rig);
