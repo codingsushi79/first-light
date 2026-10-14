@@ -1,0 +1,17 @@
+{
+  "name": "first-light-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "First Light as a desktop application (macOS .app, Windows .exe) via Tauri v2.",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:mac": "tauri build --bundles app",
+    "build:windows": "tauri build --bundles nsis",
+    "icons": "tauri icon app-icon.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.9.6"
+  }
+}
