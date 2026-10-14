@@ -163,7 +163,7 @@ export function newSequence() {
   return {
     target: G.s.target ? { ...G.s.target } : null,
     rows: [{ type: 'light', filter: null, exp: cam.type === 'dslr' ? 60 : 120, gain: cs.gain, offset: cs.offset, bin: 1, count: 30, done: 0 }],
-    opts: { center: true, guide: true, ditherEvery: 3, afStart: true, afEvery: 0, afTemp: 2, flip: true, minAlt: 15, cool: true, stopDawn: true },
+    opts: { center: true, guide: true, ditherEvery: 3, focusMode: 'temp', afEvery: 0, afTemp: 2, flip: true, minAlt: 15, cool: true, stopDawn: true },
     state: { running: false, status: 'Idle', row: 0 },
   };
 }
@@ -184,7 +184,13 @@ export async function runSequence(seq, log = () => {}) {
     }
     const lightsLeft = seq.rows.some((r) => r.type === 'light' && r.done < r.count);
     if (tgt && lightsLeft && seq.opts.center) { set(`Centering ${tgt.name}…`); await centerOn(tgt, (m) => { log(m); set(m); }); }
-    if (lightsLeft && seq.opts.afStart && ri.hasAF && n.connected.focuser) { set('Autofocus…'); await autofocus(() => {}, log); }
+    // Focus modes: lock = never touch the focuser; start = autofocus once; temp = autofocus again when it cools;
+    // comp = autofocus once, then the focuser follows temperature (temperature compensation).
+    const fmode = seq.opts.focusMode || (seq.opts.afStart === false ? 'lock' : 'temp');
+    const canAF = ri.hasAF && n.connected.focuser;
+    if (fmode === 'lock') log(`Focus locked at ${Math.round(n.focus.pos)} for the whole sequence.`);
+    if (lightsLeft && fmode !== 'lock' && canAF) { set('Autofocus…'); await autofocus(() => {}, log); }
+    const compBase = { pos: n.focus.pos, best: S.focusBest() };
     if (lightsLeft && seq.opts.guide && ri.hasGuide && n.connected.guider && !n.guider.guiding) {
       if (!n.guider.calibrated) { set('Calibrating guider…'); await S.waitSim(60); await S.calibrateGuider(); }
       const g = await S.startGuiding(); if (g && g.error) log('Guiding: ' + g.error); else { set('Guiding settling…'); await S.waitSim(10); }
@@ -209,7 +215,8 @@ export async function runSequence(seq, log = () => {}) {
             await centerOn(tgt, log);
             if (seq.opts.guide && ri.hasGuide && n.connected.guider) { await S.startGuiding(); await S.waitSim(10); }
           }
-          if (ri.hasAF && n.connected.focuser && ((seq.opts.afEvery && sinceAF >= seq.opts.afEvery) || (seq.opts.afTemp && Math.abs(env.temp - afTemp) >= seq.opts.afTemp))) {
+          if (fmode === 'comp' && canAF) { const target = Math.round(compBase.pos + (S.focusBest() - compBase.best)); if (target !== Math.round(n.focus.pos)) await S.setFocus(target); }
+          if (fmode === 'temp' && canAF && ((seq.opts.afEvery && sinceAF >= seq.opts.afEvery) || (seq.opts.afTemp && Math.abs(env.temp - afTemp) >= seq.opts.afTemp))) {
             set('Autofocus (temperature/interval)…'); await autofocus(() => {}, log); sinceAF = 0; afTemp = S.envAt(G.s.time).temp;
           }
           if (seq.opts.ditherEvery && n.guider.guiding && sinceDither >= seq.opts.ditherEvery) { set('Dithering…'); S.dither(8); await S.waitSim(10); sinceDither = 0; }

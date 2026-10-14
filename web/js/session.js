@@ -376,6 +376,7 @@ export function focusBest() {
   const n = night(); const ri = rig(); const env = envAt(G.s.time);
   const f = n.focus; const T0 = n.wx.temp[0];
   if (!ri.opt) return f.pos;
+  if (G.s.gameMode === 'sandbox' && G.s.sandbox && G.s.sandbox.noFocusDrift) return f.best0; // sandbox: optics don't shift with temperature
   if (f.unit === 'deg') return f.best0 - (env.temp - T0) * (ri.opt.tempCoeff || 1) / (ri.opt.focusUmPerDeg || 10) * 2;
   return f.best0 - (env.temp - T0) * (ri.opt.tempCoeff || 3) / (ri.opt.focusUmPerStep || 4) * 2;
 }

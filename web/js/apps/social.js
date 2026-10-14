@@ -3,6 +3,7 @@ import { h, toast, openApp, confirmDlg, dialog, select } from '../wm.js';
 import { G, on, off, emit, save, addMoney, fmtDate, fmtDur, idbGet, idbDel, isSandbox } from '../state.js';
 import { GEAR, CAMERAS, OPTICS, MOUNTS, FILTERS, CORRECTORS, ACCESSORIES, LOC, money } from '../gear.js';
 import { cat } from '../catalog.js';
+import * as S from '../session.js';
 import * as A from '../astro.js';
 import { mulberry32, hashStr } from '../util.js';
 
@@ -264,6 +265,7 @@ export const settingsApp = {
     root.append(h('div', { class: 'card' }, h('h3', {}, 'About the simulation'), h('div', { class: 'small', html: `Sky imagery: <b>DSS2 color</b> & <b>Mellinger</b> surveys via CDS <i>hips2fits</i> (Université de Strasbourg/CNRS). Name resolving: CDS <b>Sesame</b> (SIMBAD/NED/VizieR). Stars, constellations & Milky Way: <b>d3-celestial</b> data (Hipparcos-based).<br><br>Each frame is simulated from photons up: aperture, transmission, QE, filter bandpass (Hα/OIII/SII are extracted from survey colors), sky brightness (Bortle level, Moon via Krisciunas–Schaefer, twilight, airmass), extinction, clouds, seeing, diffraction, defocus, coma/field curvature, vignetting & dust, tracking errors (polar misalignment drift, periodic error, wind, field rotation), shot noise, read noise, dark current & hot pixels, amp glow, bias banding, full-well & ADC clipping.` })));
     if (G.s.gameMode === 'sandbox') root.append(h('div', { class: 'card' }, h('h3', {}, 'Sandbox'),
       h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: !!(G.s.sandbox && G.s.sandbox.clearSkies), onchange: (e) => { G.s.sandbox = { ...(G.s.sandbox || {}), clearSkies: e.target.checked }; if (e.target.checked && G.s.night) G.s.night.wx.clouds = G.s.night.wx.clouds.map(() => 0); save(); } }), 'Always clear skies'),
+      h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: !!(G.s.sandbox && G.s.sandbox.noFocusDrift), onchange: (e) => { if (e.target.checked && G.s.night) G.s.night.focus.best0 = S.focusBest(); G.s.sandbox = { ...(G.s.sandbox || {}), noFocusDrift: e.target.checked }; save(); } }), 'No focus drift (focus stays perfect as the night cools)'),
       h('div', { class: 'muted small' }, 'Gear: everything is in your inventory — swap it outside with R → Change gear.')));
     root.append(h('div', { class: 'card' }, h('h3', {}, 'Save game'), h('div', { class: 'muted small' }, 'Progress is saved automatically.'),
       h('div', { class: 'small' }, `Save: ${G.s.saveName || 'guest session'} · ${G.s.gameMode === 'sandbox' ? 'Sandbox' : 'Career'}`),
