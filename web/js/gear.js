@@ -41,6 +41,18 @@ export const CAMERAS = [
     w: 9576, h: 6388, pix: 3.76, qe: 0.91, bits: 16, fw: 51400, gainMax: 300, e0: 0.78, hcg: 100, rnLCG: 3.5, rnHCG: 1.2, offset: 50,
     cooled: true, deltaT: 35, dark25: 0.035, hot: 0.0002, ampGlow: 0,
     desc: '61 MP full-frame cooled mono. Needs a big image circle and 2"/50mm filters.' },
+  { id: 'planet_462', kind: 'camera', name: 'Aster 462MC planetary camera', brand: 'Aster', price: 290, weight: 0.12, type: 'astro', mono: false, planetary: true,
+    w: 1936, h: 1096, pix: 2.9, qe: 0.8, qeRGB: [1, 0.95, 0.8], haFactor: 1.0, bits: 12, fw: 15000, gainMax: 600, e0: 0.23, hcg: 80, rnLCG: 2.5, rnHCG: 0.7, offset: 10,
+    cooled: false, dark25: 0.15, hot: 0.0006, ampGlow: 4, fpsMax: 136,
+    desc: 'Tiny, fast uncooled color camera for lucky imaging of planets and the Moon. 136 fps, sub-electron read noise, very IR-sensitive.' },
+  { id: 'planet_678', kind: 'camera', name: 'Aster 678MC planetary camera', brand: 'Aster', price: 380, weight: 0.13, type: 'astro', mono: false, planetary: true,
+    w: 3840, h: 2160, pix: 2.0, qe: 0.83, qeRGB: [0.95, 1, 0.85], haFactor: 1.0, bits: 12, fw: 11300, gainMax: 600, e0: 0.17, hcg: 100, rnLCG: 1.9, rnHCG: 0.6, offset: 10,
+    cooled: false, dark25: 0.1, hot: 0.0004, ampGlow: 2, fpsMax: 47,
+    desc: '8 MP planetary camera with tiny 2µm pixels: lunar mosaics and planets at shorter f-ratios.' },
+  { id: 'planet_290', kind: 'camera', name: 'Aster 290MM mini (mono planetary)', brand: 'Aster', price: 330, weight: 0.12, type: 'astro', mono: true, planetary: true,
+    w: 1936, h: 1096, pix: 2.9, qe: 0.8, bits: 12, fw: 14600, gainMax: 600, e0: 0.22, hcg: 80, rnLCG: 2.5, rnHCG: 0.75, offset: 10,
+    cooled: false, dark25: 0.15, hot: 0.0006, ampGlow: 3, fpsMax: 170,
+    desc: 'Mono planetary sensor: maximum resolution on the Moon, RGB or IR imaging of planets with a filter wheel.' },
 ];
 
 export const OPTICS = [
@@ -97,6 +109,9 @@ export const CORRECTORS = [
   { id: 'flattener', kind: 'corrector', name: 'Refractor field flattener 1.0×', price: 160, weight: 0.3, forTypes: ['refractor', 'rc'], factor: 1.0, fixes: 'flattener', edgeMul: 0.15, desc: 'Flattens the field of refractors / RCs for round corner stars.' },
   { id: 'reducer08', kind: 'corrector', name: 'Reducer/flattener 0.8×', price: 260, weight: 0.35, forTypes: ['refractor'], factor: 0.8, fixes: 'flattener', edgeMul: 0.25, desc: 'Faster f-ratio and wider field for refractors.' },
   { id: 'coma', kind: 'corrector', name: 'Newtonian coma corrector', price: 190, weight: 0.3, forTypes: ['newtonian'], factor: 1.0, fixes: 'coma', edgeMul: 0.12, desc: 'Removes comet-shaped stars at the edges of fast Newtonians.' },
+  { id: 'barlow2', kind: 'corrector', name: '2× apochromatic Barlow', price: 95, weight: 0.15, forTypes: ['refractor', 'newtonian', 'sct', 'rc', 'rasa'], factor: 2, barlow: true, edgeMul: 1, desc: 'Doubles the focal length. For planets aim for f-ratio ≈ 5× the pixel size in µm (f/15 for 2.9µm pixels).' },
+  { id: 'barlow3', kind: 'corrector', name: '3× Barlow', price: 130, weight: 0.18, forTypes: ['refractor', 'newtonian', 'sct', 'rc', 'rasa'], factor: 3, barlow: true, edgeMul: 1, desc: 'Triples the focal length. Great for fast Newtonians on planets.' },
+  { id: 'powermate5', kind: 'corrector', name: '5× Powermate tele-extender', price: 240, weight: 0.3, forTypes: ['refractor', 'newtonian', 'sct', 'rc'], factor: 5, barlow: true, edgeMul: 1, desc: 'Huge magnification for tiny planets (Mars, Uranus) and lunar close-ups — needs excellent seeing.' },
   { id: 'sct_red', kind: 'corrector', name: 'SCT reducer 0.63×', price: 180, weight: 0.2, forTypes: ['sct'], factor: 0.63, fixes: 'flattener', edgeMul: 0.4, desc: 'Turns an f/10 SCT into f/6.3 (2.5× faster).' },
 ];
 
@@ -146,10 +161,18 @@ export const ACCESSORIES = [
   { id: 'panel', kind: 'acc', name: 'LED flat panel', price: 180, weight: 0.5, desc: 'Even light source for taking flat frames any time.' },
   { id: 'power', kind: 'acc', name: 'Portable power station (500Wh)', price: 360, weight: 5.5, desc: 'Powers laptop, mount, camera cooler and dew heater all night.' },
   { id: 'hairdryer', kind: 'acc', handheld: true, name: '12V hair dryer (dew zapper)', price: 30, weight: 0.4, desc: 'Blast dewed-up optics clear in a minute; the glass stays warm for a while. Shakes the rig — not mid-exposure!' },
+  { id: 'adc', kind: 'acc', name: 'Atmospheric dispersion corrector (ADC)', price: 220, weight: 0.2, desc: 'Prisms that cancel the atmosphere’s rainbow smear (blue top, red bottom) on planets low in the sky.' },
   { id: 'sqm', kind: 'acc', name: 'Sky Quality Meter', price: 140, weight: 0.1, desc: 'Measures sky darkness in mag/arcsec².' },
 ];
 
-export const ALL_GEAR = [...CAMERAS, ...OPTICS, ...CORRECTORS, ...MOUNTS, ...FILTERS, ...ACCESSORIES];
+// Storage for the laptop (frames, videos and stacks are big)
+export const STORAGE = [
+  { id: 'ssd1', kind: 'storage', name: 'Portable SSD 1 TB (USB-C)', price: 90, bytes: 1e12, desc: 'Room for ~20,000 DSLR raws or a few hundred planetary videos.' },
+  { id: 'ssd2', kind: 'storage', name: 'Portable SSD 2 TB (USB-C)', price: 160, bytes: 2e12, desc: 'Fast, rugged, fits in the eyepiece case.' },
+  { id: 'nvme4', kind: 'storage', name: 'Internal NVMe upgrade 4 TB', price: 320, bytes: 4e12, desc: 'Swap the laptop’s SSD for a 4 TB one (the old drive becomes a backup).' },
+  { id: 'nas16', kind: 'storage', name: 'Home NAS 16 TB (RAID)', price: 950, bytes: 16e12, desc: 'Network storage for a lifetime of 60-megapixel FITS files.' },
+];
+export const ALL_GEAR = [...CAMERAS, ...OPTICS, ...CORRECTORS, ...MOUNTS, ...FILTERS, ...ACCESSORIES, ...STORAGE];
 export const GEAR = Object.fromEntries(ALL_GEAR.map((g) => [g.id, g]));
 
 export const LOCATIONS = WORLD_SITES.map(siteFromRow);
@@ -210,7 +233,7 @@ export function rigInfo(rig) {
   let edgeAb = opt.edgeAb * Math.pow(stopRatio, 2.2);
   const corrOK = corr && corr.forTypes.includes(opt.type);
   if (corr && !corrOK) info.warnings.push(`${corr.name} does not fit a ${opt.type}.`);
-  if (opt.needs && !(corrOK && corr.fixes === opt.needs)) {
+  if (opt.needs && !(corrOK && corr.fixes === opt.needs) && !(corrOK && corr.barlow)) {
     info.warnings.push(opt.needs === 'coma' ? 'No coma corrector: stars at the edges will look like comets.' : 'No field flattener: corner stars will be elongated.');
   } else if (corrOK) edgeAb *= corr.edgeMul;
   const circleRatio = diag / (opt.imageCircle || 44);
@@ -236,7 +259,7 @@ export function rigInfo(rig) {
     spikes: opt.spikes || 0, blades: isLens && stopRatio < 0.8 ? opt.blades : 0,
     hasGuide: (rig.acc || []).includes('guidekit'), hasAF: (rig.acc || []).includes('autofocus') && !isLens,
     hasWheel: (rig.acc || []).includes('wheel') && cam.mono, hasDew: (rig.acc || []).includes('dew'),
-    hasBahtinov: (rig.acc || []).includes('bahtinov'), hasPanel: (rig.acc || []).includes('panel'), hasPower: (rig.acc || []).includes('power'),
+    hasBahtinov: (rig.acc || []).includes('bahtinov'), hasPanel: (rig.acc || []).includes('panel'), hasPower: (rig.acc || []).includes('power'), hasADC: (rig.acc || []).includes('adc'), barlow: corrOK && corr.barlow ? corr.factor : 1,
     filters: filter,
   });
   return info;

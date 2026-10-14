@@ -272,7 +272,7 @@ function applyFull(state) {
   const keep = G.s ? { capture: G.s.capture, chartOpts: G.s.chartOpts, chartView: G.s.chartView, settings: G.s.settings } : {};
   const hadNight = !!(G.s && G.s.night);
   G.s = { ...state, ...Object.fromEntries(Object.entries(keep).filter(([, v]) => v)) };
-  if (!G.s.settings) G.s.settings = { nightMode: false, quality: 1024, linked: false, sound: true };
+  if (!G.s.settings) G.s.settings = { nightMode: false, quality: 2048, linked: false, sound: true };
   G.guest = true;
   if (hadNight !== !!G.s.night) emit('night', G.s.night);
 }

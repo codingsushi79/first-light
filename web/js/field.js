@@ -40,6 +40,7 @@ function ensureWorld() {
   if (world) return world;
   world = new World(worldEl); window.__world = world;
   if (MP.role === 'client') { world.player.pos.set(-1.4 - Math.random(), 1.65, 1.2 + Math.random()); world.player.yaw = -0.4; } // don't spawn inside the host
+  world.onView = (w) => hud.updateView(w);
   world.on('hover', (a) => hud.setPrompt(hoverText(a)));
   world.on('action', (a) => doAction(a));
   world.on('panel', () => togglePanel());
@@ -65,7 +66,7 @@ function doAction(a) {
   const n = G.s.night; if (!n) return;
   const ri = rigInfo(G.s.rig);
   if (a === 'laptop') return sitDown();
-  if (a === 'cap') { S.setProp('capOn', false); toast('Lens cap removed. (Keep it handy for dark frames!)', 'info', 2500); save(); return; }
+  if (a === 'cap') { window.dispatchEvent(new CustomEvent('fl-sfx', { detail: { name: 'cap' } })); S.setProp('capOn', false); toast('Lens cap removed. (Keep it handy for dark frames!)', 'info', 2500); save(); return; }
   if (a === 'bahtinov') { S.setProp('bahtinov', false); toast('Bahtinov mask removed.', 'info', 2000); return; }
   if (a === 'dew') { if (n.dew > 0.05 || (n.smudge || 0) > 0.05 || !ri.hasDew) return openPanel('optics'); if (ri.hasDew) { S.setProp('dewHeater', !n.dewHeater); toast(`Dew heater ${n.dewHeater ? 'on' : 'off'}.`, 'info', 1800); } return; }
   if (a === 'focus') return openPanel('focus');

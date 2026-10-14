@@ -170,3 +170,28 @@ body.hud-off .hud > :not(.hud-xhair):not(.hud-prompt):not(.hud-chat) { display: 
 .tut-wait { color: var(--av-accent); font-size: 10.5px; animation: pulse 1.6s infinite; }
 .dock-item.tut-pulse .dock-icon { animation: tutpulse 1.1s infinite; }
 @keyframes tutpulse { 0%, 100% { transform: translateY(0); filter: drop-shadow(0 0 0 rgba(143,211,255,0)); } 50% { transform: translateY(-8px); filter: drop-shadow(0 0 10px rgba(143,211,255,.9)); } }
+
+/* compass tape + sky markers */
+.hud-compass { position: absolute; top: 92px; left: 50%; width: 420px; margin-left: -210px; height: 30px; overflow: hidden; pointer-events: none;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent); mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent); }
+.compass-tape { position: absolute; left: 210px; top: 0; height: 18px; will-change: transform; }
+.compass-tape .ct { position: absolute; top: 0; width: 1px; height: 5px; background: rgb(255 255 255 / .35); font: 500 10px/1 var(--av-cond); letter-spacing: .08em; color: var(--av-muted); }
+.compass-tape .ct.major { height: 8px; background: rgb(255 255 255 / .6); }
+.compass-tape .ct.major::after { content: attr(data-l); }
+.compass-tape .ct:not(:empty) { background: none; height: auto; transform: translateX(-50%); padding-top: 2px; }
+.compass-tape .ct.cd { color: var(--av-text); font-weight: 600; font-size: 11px; }
+.compass-caret { position: absolute; left: 50%; top: 15px; width: 0; height: 0; margin-left: -4px; border: 4px solid transparent; border-bottom-color: var(--av-accent); }
+.compass-read { position: absolute; left: 0; right: 0; top: 21px; text-align: center; font-size: 9.5px; color: var(--av-accent); letter-spacing: .06em; }
+.hud-markers { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.sky-mk { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; margin: -9px 0 0 -9px; width: 18px; overflow: visible; white-space: nowrap; will-change: transform; }
+.sky-mk i { display: block; width: 18px; height: 18px; border: 1.5px solid currentColor; }
+.sky-mk b { font: 600 10px/1 var(--av-cond); letter-spacing: .1em; text-shadow: 0 1px 2px #000; }
+.sky-mk small { font: 9.5px/1 var(--av-mono); opacity: .8; text-shadow: 0 1px 2px #000; }
+.sky-mk.target { color: #ffd166; }
+.sky-mk.target i { border-radius: 0; transform: rotate(45deg) scale(.8); }
+.sky-mk.scope { color: #ff6b6b; }
+.sky-mk.scope i { border-radius: 50%; }
+.sky-mk.planet { color: rgb(255 226 170 / .85); margin: -5px 0 0 -5px; width: 10px; }
+.sky-mk.planet i { width: 10px; height: 10px; border-width: 1px; border-radius: 50%; opacity: .7; }
+.sky-mk.edge { opacity: .75; }
+.sky-mk.edge i { border-style: dashed; }

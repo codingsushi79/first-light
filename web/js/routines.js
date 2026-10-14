@@ -267,3 +267,45 @@ export async function runSequence(seq, log = () => {}) {
   }
 }
 export function stopSequence() { R.abort = true; S.abortExposure(); }
+
+// ---------------- planets: find & center ----------------
+// Slew to a planet / the Moon, find its disk in a short exposure and re-center on it
+// (planet in frame → its offset gives the true pointing → sync → GoTo again).
+export async function centerBody(name, log = () => {}) {
+  try {
+    const n = S.night(); const mount = GEAR[G.s.rig.mount];
+    if (!n) throw new Error('You are not out observing.');
+    if (!n.connected.camera) throw new Error('Connect the camera first.');
+    if (n.capOn) throw new Error('The lens cap is on.');
+    const cs = cameraSettings();
+    let found0 = false;
+    for (let it = 0; it < 5; it++) {
+      if (R.abort) throw new Error('Aborted');
+      const b = S.bodyInfo(name);
+      if (mount.goto && !found0) {
+        if (!n.connected.mount) throw new Error('Connect the mount first.');
+        const r = await S.gotoRaDec(b.ra, b.dec, name); if (r && r.error) throw new Error(r.error);
+        setActivity(`Slewing to ${name}… (~${Math.ceil(r.dur)}s)`); await S.waitSim(r.dur + 1);
+      }
+      setActivity(`Looking for ${name}…`);
+      const fr = await S.expose({ type: 'light', exp: name === 'Moon' ? 0.002 : 0.02, gain: cs.gain, offset: cs.offset, bin: 1, save: false, target: 'finder' });
+      const found = (fr.res.bodies || []).find((x) => x.name === name);
+      if (!found) {
+        log(`${name} is not in the field — plate solving to fix the pointing model…`);
+        if (!mount.goto) throw new Error(`${name} is not in the field. Aim closer by hand (Field view) and try again.`);
+        const sol = await captureAndSolve(); S.syncTo(sol.ra, sol.dec); continue;
+      }
+      found0 = true;
+      const off = Math.hypot(found.x - fr.res.W / 2, found.y - fr.res.H / 2) * fr.res.scale;
+      log(`${name} found, ${A.fmtAngle(off)} from center`);
+      if (off < Math.max(10, fr.res.scale * 15)) { emit('toast', { msg: `${name} centered ✓`, kind: 'good' }); return true; }
+      if (!mount.goto && mount.type === 'fixed') throw new Error(`${name} is ${A.fmtAngle(off)} off center — nudge it by hand.`);
+      // nudge the mount by the measured offset (like clicking "center here" in capture software)
+      const p = S.pointing(), bb = S.bodyInfo(name);
+      if (mount.type === 'eq') S.nudge(A.norm180(bb.ra - p.ra) * Math.cos(p.dec * A.D2R) * 3600, (bb.dec - p.dec) * 3600);
+      else { const L = A.lst(G.s.time, S.locNow().lon), lat = S.locNow().lat; const a1 = A.radec2altaz(bb.ra, bb.dec, L, lat); S.nudge(A.norm180(a1.az - p.az) * Math.cos(p.alt * A.D2R) * 3600, (a1.alt - p.alt) * 3600); }
+      await S.waitSim(2);
+    }
+    throw new Error(`Could not center ${name}.`);
+  } finally { setActivity(''); }
+}

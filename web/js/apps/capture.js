@@ -43,7 +43,7 @@ export const captureApp = {
       const hfrAs = st.hfr * fr.res.scale;
       statLine.innerHTML = '';
       const it = (k, v, cls = '') => statLine.append(h('span', { class: 'stat ' + cls }, h('b', {}, k), ' ', v));
-      it('Type', m.type.toUpperCase()); it('Exp', `${m.exp}s`); it(G.s.rig && GEAR[m.cam].type === 'dslr' ? 'ISO' : 'Gain', m.gain);
+      it('Type', m.type.toUpperCase() + (m.frames ? ` · ${m.frames} fr` : '')); it('Exp', m.exp < 0.5 ? `${+(m.exp * 1000).toFixed(2)}ms` : `${m.exp}s`); it(G.s.rig && GEAR[m.cam].type === 'dslr' ? 'ISO' : 'Gain', m.gain);
       it('Median', `${st.median.toFixed(0)} ADU`, st.median > fr.res.maxADU * 0.6 ? 'warn' : ''); it('Stars', st.stars, st.stars < 15 ? 'warn' : '');
       it('HFR', `${st.hfr.toFixed(2)}px (${hfrAs.toFixed(1)}″)`); it('Ecc', st.ecc.toFixed(2), st.ecc > 0.6 ? 'warn' : '');
       it('Sat', `${(st.saturated * 100).toFixed(2)}%`, st.saturated > 0.005 ? 'warn' : ''); it('Temp', `${m.temp}°C`);
@@ -58,6 +58,7 @@ export const captureApp = {
     const t = tabs([
       { id: 'equip', label: 'Equipment', render: renderEquip },
       { id: 'imaging', label: 'Imaging', render: renderImaging },
+      { id: 'planetary', label: 'Planetary', render: renderPlanetary },
       { id: 'sequence', label: 'Sequencer', render: renderSequence },
       { id: 'focus', label: 'Focus', render: renderFocus },
       { id: 'solve', label: 'Plate Solve', render: renderSolve },
@@ -189,11 +190,102 @@ export const captureApp = {
       const ex = S.T.exposure;
       expBar.innerHTML = '';
       if (ex) {
-        const f = Math.min(1, (G.s.time - ex.t0) / 1000 / ex.exp);
+        const vid = ex.recipe.type === 'video', total = vid ? (ex.end - ex.t0) / 1000 : ex.exp;
+        const f = Math.min(1, (G.s.time - ex.t0) / 1000 / total);
         expBar.append(bar(f, 'red'));
-        expLabel.textContent = ex.rendering ? 'Downloading image…' : `Exposing ${((G.s.time - ex.t0) / 1000).toFixed(1)} / ${ex.exp}s ${ex.recipe.roi ? '(crop)' : ''}`;
+        expLabel.textContent = ex.rendering ? (vid ? 'Writing SER file…' : 'Downloading image…') : vid ? `● REC frame ${Math.min(ex.recipe.frames, Math.round(f * ex.recipe.frames))} / ${ex.recipe.frames} · ${ex.recipe.fps.toFixed(0)} fps`
+          : ex.exp < 0.5 ? `Exposing ${+(ex.exp * 1000).toFixed(1)} ms ${ex.recipe.roi ? '(ROI)' : ''}` : `Exposing ${((G.s.time - ex.t0) / 1000).toFixed(1)} / ${ex.exp}s ${ex.recipe.roi ? '(crop)' : ''}`;
       } else expLabel.textContent = RT.R.seq && RT.R.seq.state.running ? RT.R.seq.state.status : 'Idle';
     }, 150);
+
+    // ======================= Planetary (video / lucky imaging) =======================
+    let pLive = false;
+    function planetCfg() { const cs = RT.cameraSettings(); return cs.planet || (cs.planet = { roi: '640', exp: 0.008, gain: null, frames: 2000 }); }
+    function roiFor(key) {
+      const cam = S.rig().cam; if (key === 'full') return null;
+      const [w, hh] = { 320: [320, 240], 640: [640, 480], 1024: [1024, 768] }[key] || [640, 480];
+      return { cx: Math.floor(cam.w / 2), cy: Math.floor(cam.h / 2), w: Math.min(w, cam.w), h: Math.min(hh, cam.h) };
+    }
+    function renderPlanetary(el) {
+      const n = S.night(); const ri = S.rig(); const cam = ri.cam; const pc = planetCfg(); const cs = RT.cameraSettings();
+      if (pc.gain == null) pc.gain = cam.type === 'dslr' ? 800 : Math.min(cam.gainMax, 300);
+      const left = h('div', { class: 'img-left' }, viewer.el, h('div', { class: 'img-under' }, histCanvas, statLine));
+      const right = h('div', { class: 'img-right' });
+      el.append(h('div', { class: 'img-wrap' }, left, right));
+      setTimeout(() => { viewer.draw(); if (S.T.lastFrame) showFrame(S.T.lastFrame); }, 0);
+      // what's in view
+      const bodiesCard = h('div', { class: 'card' }, h('h3', {}, 'Planets & Moon tonight'));
+      if (n) {
+        const loc = S.locNow(), L = A.lst(G.s.time, loc.lon);
+        const list = ['Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune'].map((nm) => { const b = S.bodyInfo(nm); return { ...b, alt: A.radec2altaz(b.ra, b.dec, L, loc.lat).alt }; });
+        const tb = h('table', { class: 'tbl compact', style: { width: '100%' } }, h('tr', {}, ...['', 'Alt', 'Mag', 'Size', 'Lit', ''].map((x) => h('th', {}, x))));
+        for (const b of list) tb.append(h('tr', { class: b.alt < 10 ? 'dim' : '' }, h('td', {}, h('b', {}, b.name)), h('td', {}, `${b.alt.toFixed(0)}°`), h('td', {}, b.mag.toFixed(1)), h('td', {}, b.diam > 120 ? `${(b.diam / 60).toFixed(1)}′` : `${b.diam.toFixed(1)}″`), h('td', {}, `${Math.round(b.illum * 100)}%`),
+          h('td', {}, h('button', { class: 'btn tiny', disabled: b.alt < 0, onclick: async (e) => {
+            S.setTarget({ id: b.name, name: b.name, ra: b.ra, dec: b.dec, size: b.diam / 60, type: 'planet', body: b.name });
+            pc.target = b.name; save(); e.target.disabled = true;
+            try { await RT.centerBody(b.name, addLog); } catch (er) { toast(er.message, 'warn'); }
+            e.target.disabled = false;
+          }, title: `Slew to ${b.name} and center it` }, 'Center'))));
+        bodiesCard.append(tb);
+      } else bodiesCard.append(h('div', { class: 'muted small' }, 'Head out to see what is up tonight.'));
+      // optics check: f-ratio rule of thumb (f ≈ 5 × pixel size µm)
+      const ideal = 5 * cam.pix; const fr = ri.fstop;
+      const fNote = fr < ideal * 0.6 ? `Under-sampled for planets: add a ${Math.max(2, Math.round(ideal / fr))}× Barlow (AstroMart).` : fr > ideal * 1.6 ? 'Over-sampled: dim and soft, only worth it in superb seeing.' : 'Close to ideal sampling ✓';
+      const optCard = h('div', { class: 'card' }, h('h3', {}, 'Sampling'),
+        h('div', { class: 'kv' }, h('span', {}, 'Focal ratio'), h('b', {}, `f/${fr.toFixed(1)}${ri.barlow > 1 ? ` (with ${ri.barlow}× Barlow)` : ''}`)),
+        h('div', { class: 'kv' }, h('span', {}, 'Ideal for this camera'), h('b', {}, `≈ f/${ideal.toFixed(0)}`)),
+        h('div', { class: 'kv' }, h('span', {}, 'Pixel scale'), h('b', {}, `${ri.scale.toFixed(2)}″/px`)),
+        h('div', { class: 'kv' }, h('span', {}, 'Diffraction limit'), h('b', {}, `${(116 / ri.D).toFixed(2)}″`)),
+        n ? h('div', { class: 'kv' }, h('span', {}, 'Seeing now'), h('b', {}, `${S.envAt(G.s.time).seeing.toFixed(1)}″`)) : null,
+        h('div', { class: 'small ' + (fNote.endsWith('✓') ? 'muted' : 'warnline') }, fNote),
+        cam.planetary ? null : h('div', { class: 'small warnline' }, 'Tip: a fast planetary camera (≥100 fps, tiny pixels) is far better for this than ' + (cam.type === 'dslr' ? 'a DSLR' : 'a deep-sky camera') + '.'));
+      // capture settings
+      const roiNow = () => roiFor(pc.roi);
+      const fpsL = h('b', {});
+      const updFps = () => { const fps = Math.min(S.maxFps(cam, roiNow()), 1 / pc.exp); fpsL.textContent = `${fps.toFixed(0)} fps · ${fmtDur(pc.frames / fps)} for ${pc.frames} frames`; };
+      const gainSel = cam.type === 'dslr' ? select(cam.isos.map((i) => [i, 'ISO ' + i]), pc.gain, (v) => { pc.gain = +v; save(); })
+        : num(pc.gain, (v) => { pc.gain = Math.max(0, Math.min(cam.gainMax, Math.round(v))); save(); }, { min: 0, max: cam.gainMax, step: 10 });
+      const set = h('div', { class: 'card' }, h('h3', {}, 'Video capture (SER)'),
+        h('div', { class: 'formgrid' },
+          h('label', {}, 'ROI'), select([['320', '320 × 240'], ['640', '640 × 480'], ['1024', '1024 × 768'], ['full', 'Full sensor']], pc.roi, (v) => { pc.roi = v; save(); updFps(); }),
+          h('label', {}, 'Exposure (ms)'), num(+(pc.exp * 1000).toFixed(2), (v) => { pc.exp = Math.max(0.05, v) / 1000; save(); updFps(); }, { step: 'any', min: 0.05, style: { width: '90px' } }),
+          h('label', {}, cam.type === 'dslr' ? 'ISO' : 'Gain'), gainSel,
+          h('label', {}, 'Frames'), select([[500, '500'], [1000, '1000'], [2000, '2000'], [5000, '5000'], [10000, '10000']], pc.frames, (v) => { pc.frames = +v; save(); updFps(); }),
+          h('label', {}, 'Rate'), fpsL,
+          h('label', {}, 'Name'), h('input', { class: 'inp', value: pc.target || (G.s.target ? G.s.target.name : ''), placeholder: 'e.g. Jupiter', onchange: (e) => { pc.target = e.target.value; save(); } })));
+      updFps();
+      const peakL = h('div', { class: 'peakbar' }, h('span', {}));
+      const peakTxt = h('div', { class: 'small muted' }, 'Peak brightness: —');
+      const showPeak = (fr) => { if (!fr || !fr.res) return; const p = fr.res.peakFrac || 0; peakL.firstChild.style.width = `${Math.min(100, p * 100)}%`; peakL.className = 'peakbar' + (p > 0.92 ? ' over' : p < 0.35 ? ' under' : ' ok'); peakTxt.textContent = `Peak brightness: ${(p * 100).toFixed(0)}% ${p > 0.92 ? '— clipped! shorter exposure or less gain' : p < 0.35 ? '— too dim, raise gain/exposure' : '— good (aim 60–80%)'}`; };
+      const liveBtn = h('button', { class: 'btn big' + (pLive ? ' on' : ''), onclick: () => { pLive = !pLive; liveBtn.classList.toggle('on', pLive); liveBtn.textContent = pLive ? '■ Stop live' : '▶ Live view'; if (pLive) liveLoop(); } }, pLive ? '■ Stop live' : '▶ Live view');
+      async function liveLoop() {
+        while (pLive && el.isConnected) {
+          try { const f = await S.expose({ type: 'light', exp: pc.exp, gain: pc.gain, offset: cs.offset, bin: 1, roi: roiNow(), save: false, target: 'live' }); showPeak(f); }
+          catch (e) { toast(e.message, 'warn'); pLive = false; break; }
+          await new Promise((r) => setTimeout(r, 60));
+        }
+        pLive = false; if (liveBtn.isConnected) { liveBtn.classList.remove('on'); liveBtn.textContent = '▶ Live view'; }
+      }
+      const recBtn = h('button', { class: 'btn primary big', onclick: async () => {
+        pLive = false; await new Promise((r) => setTimeout(r, 120));
+        if (S.T.exposure) { toast('Camera busy — wait a moment.', 'warn'); return; }
+        recBtn.disabled = true; recBtn.textContent = '● Recording…';
+        try {
+          const f = await S.expose({ type: 'video', exp: pc.exp, gain: pc.gain, offset: cs.offset, bin: 1, roi: roiNow(), frames: pc.frames, target: pc.target || (G.s.target ? G.s.target.name : 'Planet') });
+          showPeak(f);
+          const inFrame = (f.res.bodies || []).map((b) => b.name);
+          toast(`Recorded ${pc.frames} frames${inFrame.length ? ' of ' + inFrame.join(', ') : ' — but no planet was in the field!'}. Stack it in DeepStack → Planetary videos.`, inFrame.length ? 'good' : 'warn', 7000);
+        } catch (e) { toast(e.message, 'warn'); }
+        recBtn.disabled = false; recBtn.textContent = '● Record video';
+      } }, '● Record video');
+      right.append(bodiesCard, h('div', { class: 'card' }, h('div', { class: 'row wrap' }, liveBtn, recBtn, h('button', { class: 'btn big danger', onclick: () => { pLive = false; S.abortExposure(); } }, 'Abort')), expBar, expLabel, peakL, peakTxt), set, optCard,
+        h('div', { class: 'card tips' }, h('h3', {}, 'Lucky imaging'), h('div', { class: 'muted small', html: [
+          'Short exposures (2–15 ms) freeze the atmosphere: watch the planet “boil” in Live view. Stacking keeps only the sharpest moments.',
+          'Keep Jupiter videos under ~2 minutes — it rotates so fast that longer captures smear the belts.',
+          'Below ~35° altitude the atmosphere splits colors (blue on top, red below). An ADC fixes it; PixelLab’s RGB align helps.',
+          'Collimation and cooled-down optics matter more than anything else at these focal lengths.'].map((x) => '• ' + x).join('<br>') })));
+      if (S.T.lastFrame) showPeak(S.T.lastFrame);
+    }
 
     // ======================= Sequence =======================
     function renderSequence(el) {

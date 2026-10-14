@@ -2,7 +2,7 @@
 import { h, toast, openApp } from '../wm.js';
 import * as A from '../astro.js';
 import { G, on, off, emit, save, fmtTime } from '../state.js';
-import { cat, findLocal, sesame, bvToRGB, TYPE_LABEL } from '../catalog.js';
+import { cat, findLocal, sesame, bvToRGB, TYPE_LABEL, BODY_NAMES, bodyTarget } from '../catalog.js';
 import { GEAR, horizonAlt } from '../gear.js';
 import * as S from '../session.js';
 import * as RT from '../routines.js';
@@ -12,7 +12,7 @@ export function setTarget(t) { S.setTarget(t); }
 export const planetariumApp = {
   title: 'SkyChart', width: 1080, height: 700, minW: 600, minH: 400,
   icon: `<svg viewBox="0 0 40 40"><defs><radialGradient id="gp" cx=".5" cy=".4" r=".7"><stop offset="0" stop-color="#28407a"/><stop offset="1" stop-color="#070b1f"/></radialGradient></defs><rect width="40" height="40" rx="9" fill="url(#gp)"/><g fill="#fff"><circle cx="10" cy="12" r="1.4"/><circle cx="19" cy="9" r="1"/><circle cx="28" cy="14" r="1.6"/><circle cx="24" cy="24" r="1.2"/><circle cx="13" cy="27" r="1"/><circle cx="31" cy="29" r=".9"/></g><path d="M10 12L19 9 28 14 24 24 13 27" stroke="#7fb2ff" stroke-width=".9" fill="none"/></svg>`,
-  open(body) {
+  open(body, win, arg) {
     const canvas = h('canvas', { class: 'pl-canvas' });
     const search = h('input', { class: 'inp', placeholder: 'Search: M31, NGC 7000, Vega, Sh2-129, any SIMBAD name…', style: { width: '320px' } });
     const results = h('div', { class: 'pl-results' });
@@ -131,6 +131,17 @@ export const planetariumApp = {
       const moon = A.moonAltAz(G.s.time, P.lat, loc().lon); const ph = A.moonPhase(G.s.time);
       const mp = P.fromAltAz(moon.alt, moon.az);
       if (mp) { const mr = Math.max(7, 0.26 * P.pxPerDeg); drawMoon(ctx, mp[0], mp[1], mr, ph); ctx.fillStyle = '#ddd'; ctx.fillText(`Moon ${(ph.illum * 100).toFixed(0)}%`, mp[0] + mr + 4, mp[1]); }
+      // planets
+      ctx.textAlign = 'left'; ctx.font = '11px system-ui';
+      for (const nm of BODY_NAMES) {
+        if (nm === 'Moon') continue;
+        const b = S.bodyInfo(nm); const p = P.fromRaDec(b.ra, b.dec); if (!p || !inView(p, W, H)) continue;
+        const rad = Math.max(1.6, (3.2 - b.mag) * 0.9 + 1.2, b.diam / 3600 * P.pxPerDeg / 2);
+        const [cr, cg, cb] = b.col; ctx.fillStyle = `rgb(${cr * 255 | 0},${cg * 255 | 0},${cb * 255 | 0})`;
+        ctx.beginPath(); ctx.arc(p[0], p[1], rad, 0, 7); ctx.fill();
+        if (nm === 'Saturn' && rad > 2) { ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(p[0], p[1], rad * 2.2, rad * 0.5, -0.3, 0, 7); ctx.stroke(); }
+        if (opts.labels) { ctx.fillStyle = '#ffd98a'; ctx.fillText(nm, p[0] + rad + 4, p[1] + 4); }
+      }
       const sp = P.fromAltAz(sun.alt, sun.az); if (sp) { ctx.fillStyle = '#ffd34d'; ctx.beginPath(); ctx.arc(sp[0], sp[1], Math.max(8, 0.26 * P.pxPerDeg), 0, 7); ctx.fill(); }
       // ground
       if (opts.ground) {
@@ -217,6 +228,8 @@ export const planetariumApp = {
       let best = null, bd = 14;
       const consider = (o, ra, dec) => { const p = proj.fromRaDec(ra, dec); if (!p) return; const d = Math.hypot(p[0] - x, p[1] - y); if (d < bd) { bd = d; best = o; } };
       if (opts.dsos) for (const d of cat.dsos) { if (!d.curated && view.fov > 60 && !/^M\d/.test(d.id)) continue; consider({ ...d, kind: 'dso' }, d.ra, d.dec); }
+      for (const nm of BODY_NAMES) { const t = bodyTarget(nm); if (t) consider(t, t.ra, t.dec); }
+      if (best) bd = Math.min(bd, 6); // planets win ties against nearby stars
       for (const s of cat.stars) { if (s.mag > 6) break; consider({ id: s.name || s.desig || `HIP ${s.id}`, name: s.name || s.desig || `HIP ${s.id}`, type: 'star', ra: s.ra, dec: s.dec, mag: s.mag, size: 0, desc: `Star · mag ${s.mag.toFixed(2)} · B−V ${s.bv.toFixed(2)}`, kind: 'star' }, s.ra, s.dec); }
       if (!best) { const aa = proj.toAltAz(x, y); const rd = A.altaz2radec(aa.alt, aa.az, proj.L, proj.lat); best = { id: 'Sky position', name: `RA ${A.fmtRA(rd.ra)}`, type: 'pos', ra: rd.ra, dec: rd.dec, size: 0, desc: 'Empty sky position', kind: 'pos' }; }
       select(best);
@@ -240,7 +253,7 @@ export const planetariumApp = {
         h('div', { class: 'row wrap', style: { marginTop: '8px' } },
           h('button', { class: 'btn primary small', onclick: () => { setTarget(sel); toast(`Target set: ${sel.name}`); } }, '★ Set target'),
           h('button', { class: 'btn small', disabled: !S.canGoto(), title: S.canGoto() ? '' : 'Needs a connected GoTo mount', onclick: async () => { const r = await S.gotoRaDec(sel.ra, sel.dec, sel.name); if (r && r.error) toast(r.error, 'warn'); } }, 'Slew'),
-          h('button', { class: 'btn small', disabled: !S.night(), onclick: async () => { setTarget(sel); RT.R.abort = false; try { await RT.centerOn(G.s.target, (m) => S.log(m)); toast('Centered ' + sel.name); } catch (e) { toast(e.message, 'warn'); } } }, 'Slew & center'),
+          h('button', { class: 'btn small', disabled: !S.night(), onclick: async () => { setTarget(sel); RT.R.abort = false; try { if (sel.body) await RT.centerBody(sel.body, (m) => S.log(m)); else { await RT.centerOn(G.s.target, (m) => S.log(m)); toast('Centered ' + sel.name); } } catch (e) { toast(e.message, 'warn'); } } }, 'Slew & center'),
           h('button', { class: 'btn small', onclick: () => { setTarget(sel); openApp('framing', G.s.target); } }, 'Framing…')));
     }
     async function doSearch() {
@@ -264,7 +277,8 @@ export const planetariumApp = {
     let last = 0;
     const onTick = () => { const t = performance.now(); if (t - last > 500) { last = t; draw(); } };
     on('tick', onTick); on('mount', draw); on('solve', draw); on('catalog', draw);
-    if (G.s.target) { sel = { ...G.s.target, desc: '' }; showInfo(); }
+    if (arg && arg.ra !== undefined) setTimeout(() => goTo(arg), 30);
+    else if (G.s.target) { sel = { ...G.s.target, desc: '' }; showInfo(); }
     setTimeout(draw, 0);
     return {
       onClose() { off('tick', onTick); off('mount', draw); off('solve', draw); off('catalog', draw); ro.disconnect(); },

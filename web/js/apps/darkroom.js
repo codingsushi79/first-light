@@ -1,5 +1,5 @@
 // Files, DeepStack (stacking) and PixelLab (processing)
-import { h, toast, openApp, select, confirmDlg, promptDlg } from '../wm.js';
+import { h, toast, openApp, select, confirmDlg, promptDlg, dialog } from '../wm.js';
 import { Viewer, drawHistogram, canvasFromRGBA, bar } from '../components.js';
 import * as A from '../astro.js';
 import { G, on, off, emit, save, fmtTime, fmtDate, fmtDur, idbGet, idbSet, idbDel } from '../state.js';
@@ -8,6 +8,8 @@ import { viewRecipe, stackJob } from '../imaging.js';
 import { uid } from '../util.js';
 import { scoreImage } from './social.js';
 import { cat } from '../catalog.js';
+import { luckySeeing } from '../bodies.js';
+import { ensureSpace, stackBytes, finalBytes, usage, fmtBytes, frameBytes } from '../storage.js';
 
 const fname = (f) => FILTERS.find((x) => x.id === f)?.name.split(' ')[0] || f || 'none';
 
@@ -33,8 +35,45 @@ export const filesApp = {
     const right = h('div', { class: 'files-view' }, viewer.el, meta);
     body.append(h('div', { class: 'files-root' }, tree, grid, right));
     let cur = null;
+    function deleteFrames(ids) {
+      ids = new Set(ids); G.s.frames = G.s.frames.filter((f) => !ids.has(f.id)); ids.forEach((id) => idbDel('thumb:' + id)); save(); emit('storage');
+    }
+    function diskCard() {
+      const u = usage(); const pct = (b) => `${Math.max(0, (b / u.cap) * 100)}%`;
+      return h('div', { class: 'disk' },
+        h('div', { class: 'disk-top' }, h('b', {}, 'Internal SSD'), h('span', { class: u.free < u.cap * 0.1 ? 'warnline' : 'muted' }, `${fmtBytes(Math.max(0, u.free))} free of ${fmtBytes(u.cap)}`)),
+        h('div', { class: 'disk-bar' }, h('span', { class: 'sys', style: { width: pct(u.system) } }), h('span', { class: 'fr', style: { width: pct(u.frames) } }), h('span', { class: 'vid', style: { width: pct(u.videos) } }), h('span', { class: 'stk', style: { width: pct(u.stacks) } }), h('span', { class: 'fin', style: { width: pct(u.finals) } })),
+        h('div', { class: 'disk-leg small' }, ...[['fr', 'Frames', u.frames], ['vid', 'Videos', u.videos], ['stk', 'Stacks', u.stacks], ['fin', 'Images', u.finals], ['sys', 'System', u.system]].map(([c, l, b]) => h('span', {}, h('i', { class: c }), `${l} ${fmtBytes(b)}`))),
+        h('button', { class: 'btn tiny', onclick: () => freeUp() }, 'Free up space…'));
+    }
+    async function freeUp() {
+      const lights = G.s.frames.filter((f) => f.type === 'light');
+      const bad = lights.filter((f) => f.stats.stars < 8 || f.stats.trail > 6 || (f.recipe && f.recipe.capOn));
+      const stackedVids = G.s.frames.filter((f) => f.type === 'video' && G.s.stacks.some((s) => s.planetary && String(s.target).toLowerCase() === String(f.target).toLowerCase()));
+      const sessOrder = [...G.s.sessions].sort((a, b) => b.start - a.start).map((s) => s.id);
+      const oldCal = G.s.frames.filter((f) => f.type !== 'light' && f.type !== 'video' && sessOrder.indexOf(f.session) >= 3);
+      const newestStack = {}; for (const s of G.s.stacks) newestStack[s.target + '|' + (s.filter || '')] = s.id;
+      const oldStacks = G.s.stacks.filter((s) => newestStack[s.target + '|' + (s.filter || '')] !== s.id);
+      const sum = (a, f) => a.reduce((x, y) => x + f(y), 0);
+      const opts = [
+        ['bad', `Rejected light frames — no stars, trails or cap on (${bad.length}, ${fmtBytes(sum(bad, frameBytes))})`, bad.length],
+        ['vids', `Planetary videos already lucky-stacked (${stackedVids.length}, ${fmtBytes(sum(stackedVids, frameBytes))})`, stackedVids.length],
+        ['cal', `Calibration frames from older sessions (${oldCal.length}, ${fmtBytes(sum(oldCal, frameBytes))})`, oldCal.length],
+        ['stk', `Older stacks (newer ones of the same target & filter exist) (${oldStacks.length}, ${fmtBytes(sum(oldStacks, stackBytes))})`, oldStacks.length],
+      ];
+      const pick = {}; const box = h('div', {}, ...opts.map(([k, l, n]) => h('label', { class: 'chk', style: { display: 'flex', margin: '6px 0' } }, h('input', { type: 'checkbox', disabled: !n, checked: !!n && k !== 'stk', onchange: (e) => { pick[k] = e.target.checked; } }), l)));
+      opts.forEach(([k, , n]) => { pick[k] = !!n && k !== 'stk'; });
+      const ok = await dialog({ title: 'Free up space', body: box, buttons: [{ label: 'Cancel', value: false }, { label: 'Delete selected', value: true, danger: true }], width: 520 });
+      if (!ok) return;
+      const ids = [...(pick.bad ? bad : []), ...(pick.vids ? stackedVids : []), ...(pick.cal ? oldCal : [])].map((f) => f.id);
+      if (ids.length) deleteFrames(ids);
+      if (pick.stk) { const del = new Set(oldStacks.map((s) => s.id)); G.s.stacks = G.s.stacks.filter((s) => !del.has(s.id)); del.forEach((id) => idbDel('stack:' + id)); save(); emit('storage'); }
+      toast(`Freed space — ${fmtBytes(usage().free)} free now.`, 'good');
+      cur = null; renderTree(); renderGrid();
+    }
     function renderTree() {
       tree.innerHTML = '';
+      tree.append(diskCard());
       const gs = groupFrames();
       if (!gs.length) tree.append(h('div', { class: 'muted pad' }, 'No frames yet. Go out and shoot!'));
       for (const g of gs) {
@@ -42,18 +81,19 @@ export const filesApp = {
         const title = s ? `${fmtDate(s.start, loc.tz)} · ${loc.name.split(' (')[0]}` : 'Unknown session';
         const byT = {}; for (const f of g.frames) { const k = `${f.type === 'light' ? (f.target || 'Untitled') : f.type.toUpperCase() + 'S'}`; (byT[k] = byT[k] || []).push(f); }
         tree.append(h('div', { class: 'ft-sess' }, '📁 ' + title));
-        for (const [k, arr] of Object.entries(byT)) tree.append(h('div', { class: 'ft-item' + (cur && cur.key === s.id + k ? ' on' : ''), onclick: () => { cur = { key: s.id + k, frames: arr }; renderTree(); renderGrid(); } }, `${k} (${arr.length})`));
+        for (const [k, arr] of Object.entries(byT)) tree.append(h('div', { class: 'ft-item' + (cur && cur.key === s.id + k ? ' on' : ''), onclick: () => { cur = { key: s.id + k, frames: arr }; renderTree(); renderGrid(); } }, `${k} (${arr.length})`, h('span', { class: 'ft-size' }, fmtBytes(arr.reduce((a, f) => a + (f.bytes || frameBytes(f)), 0)))));
       }
     }
     async function renderGrid() {
       grid.innerHTML = '';
       if (!cur) return;
       const total = cur.frames.reduce((a, f) => a + (f.type === 'light' ? f.exp : 0), 0);
-      grid.append(h('div', { class: 'row small muted' }, `${cur.frames.length} frames · ${fmtDur(total)} integration`, h('button', { class: 'btn tiny danger', onclick: async () => { if (await confirmDlg('Delete frames', `Delete all ${cur.frames.length} frames in this folder?`, 'Delete')) { const ids = new Set(cur.frames.map((f) => f.id)); G.s.frames = G.s.frames.filter((f) => !ids.has(f.id)); ids.forEach((id) => idbDel('thumb:' + id)); save(); cur = null; renderTree(); renderGrid(); } } }, 'Delete folder')));
+      grid.append(h('div', { class: 'row small muted' }, `${cur.frames.length} frames · ${fmtDur(total)} integration · ${fmtBytes(cur.frames.reduce((a, f) => a + (f.bytes || frameBytes(f)), 0))}`, h('button', { class: 'btn tiny danger', onclick: async () => { if (await confirmDlg('Delete frames', `Delete all ${cur.frames.length} frames in this folder?`, 'Delete')) { deleteFrames(cur.frames.map((f) => f.id)); cur = null; renderTree(); renderGrid(); } } }, 'Delete folder')));
       for (const f of cur.frames) {
         const img = h('img', { class: 'thumb', alt: '' });
         idbGet('thumb:' + f.id).then((u) => { if (u) img.src = u; });
-        const card = h('div', { class: 'fcard', onclick: () => show(f) }, img, h('div', { class: 'small' }, `${f.type} · ${f.exp}s · ${fname(f.filter)}`), h('div', { class: 'tiny muted' }, `HFR ${f.stats.hfr} · ★${f.stats.stars}${f.stats.trail > 4 ? ' · trails' : ''}`));
+        const del = h('button', { class: 'fcard-x', title: 'Delete this frame', onclick: (e) => { e.stopPropagation(); deleteFrames([f.id]); cur.frames = cur.frames.filter((x) => x.id !== f.id); renderTree(); renderGrid(); } }, '✕');
+        const card = h('div', { class: 'fcard', onclick: () => show(f) }, del, img, h('div', { class: 'small' }, `${f.type} · ${f.exp < 0.5 ? +(f.exp * 1000).toFixed(1) + 'ms' : f.exp + 's'} · ${f.type === 'video' ? (f.frames || '') + ' fr' : fname(f.filter)} · ${fmtBytes(f.bytes || frameBytes(f))}`), h('div', { class: 'tiny muted' }, `HFR ${f.stats.hfr} · ★${f.stats.stars}${f.stats.trail > 4 ? ' · trails' : ''}`));
         grid.append(card);
       }
     }
@@ -84,7 +124,7 @@ export const stackerApp = {
     const opts = { method: 'kappa', kappa: 2.5, darks: true, flats: true, bias: true };
     function lightGroups() {
       const g = {};
-      for (const f of G.s.frames) if (f.type === 'light') { const k = `${f.target || 'Untitled'}|${f.cam}|${f.optic}|${f.focal}|${f.filter || ''}|${f.quality || 1024}`; (g[k] = g[k] || []).push(f); }
+      for (const f of G.s.frames) if (f.type === 'light') { const k = `${f.target || 'Untitled'}|${f.cam}|${f.optic}|${f.focal}|${f.filter || ''}|${f.quality || 2048}`; (g[k] = g[k] || []).push(f); }
       return g;
     }
     function renderLeft() {
@@ -98,6 +138,12 @@ export const stackerApp = {
         left.append(h('div', { class: 'st-group' + (k === selKey ? ' on' : ''), onclick: () => { selKey = k; chosen = new Set(arr.filter((f) => f.stats.stars > 5).map((f) => f.id)); renderLeft(); renderRight(); } },
           h('b', {}, tgt), h('div', { class: 'small muted' }, `${arr.length} × ~${Math.round(tot / arr.length)}s = ${fmtDur(tot)} · ${fname(filt)} · ${focal}mm · ${GEAR[cam].name.split('(')[0]}`), void opt));
       }
+      const vids = G.s.frames.filter((f) => f.type === 'video');
+      if (vids.length) {
+        left.append(h('h3', { style: { marginTop: '14px' } }, 'Planetary videos'));
+        for (const v of [...vids].reverse()) left.append(h('div', { class: 'st-group' + (selKey === 'v:' + v.id ? ' on' : ''), onclick: () => { selKey = 'v:' + v.id; renderLeft(); renderRight(); } },
+          h('b', {}, `🎞 ${v.target}`), h('div', { class: 'small muted' }, `${v.frames} frames · ${+(v.exp * 1000).toFixed(1)} ms · ${v.fps} fps · ${fmtTime(v.t0, LOC[v.loc].tz)}${v.bodies && v.bodies.length ? '' : ' · ⚠ no planet in view'}`)));
+      }
       left.append(h('h3', { style: { marginTop: '14px' } }, 'Saved stacks'));
       for (const s of [...G.s.stacks].reverse()) left.append(h('div', { class: 'st-group', onclick: () => openApp('pixellab', s.id) }, h('b', {}, s.target), h('div', { class: 'small muted' }, `${s.n} subs · ${fmtDur(s.integration)} · ${fname(s.filter)} · ${s.method}`)));
     }
@@ -105,8 +151,50 @@ export const stackerApp = {
       const L = lights[0];
       return G.s.frames.filter((f) => f.type === type && f.cam === L.cam && f.quality === L.quality && (type === 'bias' || type === 'flat' ? true : true));
     }
+    function renderVideo(v) {
+      const r = v.recipe; const dur = r.frames / r.fps;
+      const alt = A.radec2altaz(r.ra, r.dec, A.lst(r.t0, r.env.lon), r.env.lat).alt;
+      const seeingX = r.env.seeing * Math.pow(A.airmass(Math.max(alt, 5)), 0.6);
+      const vopts = { keep: 0.1, ap: true };
+      const est = h('div', { class: 'small muted' });
+      const upd = () => {
+        const fw = luckySeeing(seeingX, r.opt.D, vopts.keep);
+        est.innerHTML = `Seeing during capture ${seeingX.toFixed(1)}″ → best ${Math.round(vopts.keep * 100)}% of frames ≈ <b>${fw.toFixed(2)}″</b> (diffraction limit ${(116 / r.opt.D).toFixed(2)}″) · ${Math.round(r.frames * vopts.keep)} frames averaged → noise ÷ ${Math.sqrt(r.frames * vopts.keep).toFixed(0)}`;
+      };
+      const keepSel = select([[0.02, 'Best 2%'], [0.05, 'Best 5%'], [0.1, 'Best 10%'], [0.25, 'Best 25%'], [0.5, 'Best 50%'], [1, 'All frames']], vopts.keep, (x) => { vopts.keep = +x; upd(); });
+      upd();
+      const quality = h('canvas', { width: 520, height: 110, class: 'lucky-graph' });
+      { // quality graph: sorted frame sharpness (lognormal), like AutoStakkert
+        const c = quality.getContext('2d'); const W = 520, H = 110; c.fillStyle = 'rgba(0,0,0,.25)'; c.fillRect(0, 0, W, H);
+        const N = 200, vals = []; let seed = r.seed >>> 0; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+        for (let i = 0; i < N; i++) vals.push(Math.exp(-Math.abs((rnd() + rnd() + rnd() - 1.5)) * 1.3));
+        const sorted = [...vals].sort((a, b) => b - a);
+        c.strokeStyle = 'rgba(120,170,255,.5)'; c.beginPath(); vals.forEach((q, i) => { const x = i / (N - 1) * W, y = H - q * (H - 10) - 4; i ? c.lineTo(x, y) : c.moveTo(x, y); }); c.stroke();
+        c.strokeStyle = '#7dffb0'; c.lineWidth = 2; c.beginPath(); sorted.forEach((q, i) => { const x = i / (N - 1) * W, y = H - q * (H - 10) - 4; i ? c.lineTo(x, y) : c.moveTo(x, y); }); c.stroke();
+        c.fillStyle = 'rgba(255,255,255,.7)'; c.font = '11px system-ui'; c.fillText('frame quality (blue: in order · green: sorted)', 8, 14);
+      }
+      right.append(h('div', { class: 'card' }, h('h3', {}, `🎞 ${v.target} — ${v.frames} frames`),
+        h('div', { class: 'small muted' }, `${+(v.exp * 1000).toFixed(2)} ms · gain ${v.gain} · ${v.fps} fps · ${fmtDur(dur)} long · ${v.focal}mm f/${v.fstop} · alt ${alt.toFixed(0)}°`),
+        !(v.bodies && v.bodies.length) ? h('div', { class: 'warnline' }, '⚠ No planet or Moon was in the field in this video.') : null,
+        dur > 150 && (v.bodies || []).some((b) => b === 'Jupiter' || b === 'Saturn') ? h('div', { class: 'warnline' }, `⚠ ${fmtDur(dur)} is long for a fast-rotating giant planet — expect rotational smearing.`) : null,
+        quality));
+      const prog = h('div', {}); const progL = h('div', { class: 'small muted' });
+      const go = h('button', { class: 'btn primary big', onclick: async () => {
+        go.disabled = true;
+        try {
+          const meta = await luckyStackVideo(v, vopts.keep, (msg, f) => { prog.innerHTML = ''; prog.append(bar(f)); progL.textContent = msg; });
+          toast(`Lucky stack done: ${meta.n} of ${r.frames} frames`, 'good');
+          openApp('pixellab', meta.id);
+        } catch (e) { console.error(e); progL.textContent = '⚠ ' + e.message; }
+        go.disabled = false; renderLeft();
+      } }, '▶ Analyse & lucky-stack');
+      right.append(h('div', { class: 'card' }, h('h3', {}, 'Lucky stacking'), h('div', { class: 'row' }, h('span', {}, 'Keep'), keepSel), est,
+        h('div', { class: 'row', style: { marginTop: '8px' } }, go, h('div', { style: { flex: 1 } }, prog, progL)),
+        h('div', { class: 'muted small' }, 'Every frame is graded for sharpness; the best are aligned on the planet with many alignment points and averaged. Fewer frames = sharper but noisier. Then sharpen with wavelets in PixelLab.')));
+    }
     function renderRight() {
       right.innerHTML = '';
+      if (selKey && selKey.startsWith('v:')) { const v = G.s.frames.find((f) => f.id === selKey.slice(2)); if (v) { renderVideo(v); return; } }
       if (!selKey) { right.append(h('div', { class: 'notice' }, 'Pick a light-frame group on the left.')); return; }
       const lights = lightGroups()[selKey]; if (!lights) return;
       // frame table
@@ -154,9 +242,10 @@ export const stackerApp = {
           const integ = sel.reduce((a, f) => a + f.exp, 0);
           const meta = { id, target: L.target || 'Untitled', n: sel.length, integration: integ, filter: L.filter, cam: L.cam, optic: L.optic, focal: L.focal, W: res.W, H: res.H, nc: res.nc, method: opts.method, ref: res.refPointing, scale: res.scale, created: G.s.time, darks: job.darks.length, flats: job.flats.length,
             quality: qualityOf(sel), loc: L.loc, sessions: [...new Set(sel.map((f) => f.session))].length };
-          await idbSet('stack:' + id, { data: res.data, coverage: res.coverage });
+          meta.bytes = stackBytes(meta); ensureSpace(meta.bytes, 'the stacked image');
+  await idbSet('stack:' + id, { data: res.data, coverage: res.coverage });
           G.s.stacks.push(meta);
-          while (G.s.stacks.length > 14) { const old = G.s.stacks.shift(); idbDel('stack:' + old.id); }
+          while (G.s.stacks.length > 40) { const old = G.s.stacks.shift(); idbDel('stack:' + old.id); }
           save(true);
           progL.textContent = `Stacked ${sel.length} frames in ${((performance.now() - t0) / 1000).toFixed(1)}s.`;
           emit('stacked', meta);
@@ -173,6 +262,25 @@ export const stackerApp = {
   },
 };
 const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+// Lucky-stack a planetary video (also used by scripts). Returns the new stack's meta.
+export async function luckyStackVideo(v, keep, onProgress = () => {}) {
+  const r = v.recipe;
+  const alt = A.radec2altaz(r.ra, r.dec, A.lst(r.t0, r.env.lon), r.env.lat).alt;
+  const seeingX = r.env.seeing * Math.pow(A.airmass(Math.max(alt, 5)), 0.6);
+  const res = await stackJob({ video: r, keep }, onProgress);
+  const id = uid(); const kept = Math.round(r.frames * keep);
+  const body = (res.bodies || [])[0];
+  const fwhm = Math.hypot(luckySeeing(seeingX, r.opt.D, keep), 116 / r.opt.D, res.smear || 0);
+  const meta = { id, target: v.target || 'Planet', n: kept, integration: kept * r.exp, filter: v.filter, cam: v.cam, optic: v.optic, focal: v.focal, W: res.W, H: res.H, nc: res.nc, method: 'lucky', ref: res.refPointing, scale: res.scale, created: G.s.time, darks: 0, flats: 0,
+    loc: v.loc, sessions: 1, planetary: true, planet: body ? { name: body.name, rPix: body.rPix, diam: body.rPix * 2 * res.scale, fwhm, smear: res.smear, alt, adc: !!r.adc, total: r.frames, kept } : null, quality: { defocus: Math.abs(r.focusDelta || 0) / (4.88 * 0.55 * (r.opt.focal / r.opt.D) ** 2), trail: 0, jitterPx: 0 } };
+  meta.bytes = stackBytes(meta); ensureSpace(meta.bytes, 'the stacked image');
+  await idbSet('stack:' + id, { data: res.data, coverage: res.coverage });
+  G.s.stacks.push(meta);
+  while (G.s.stacks.length > 40) { const old = G.s.stacks.shift(); idbDel('stack:' + old.id); }
+  save(true); emit('stacked', meta);
+  return meta;
+}
+
 // Star quality of a set of subs. Measured HFR/eccentricity on the downscaled frames is polluted by
 // nebulosity and survey star halos, so sharpness is judged from what physically happened to each sub:
 // defocus relative to the critical focus zone, and tracking trail / jitter relative to the pixel scale.
@@ -197,14 +305,17 @@ export const pixellabApp = {
     let P = defaultParams();
     let mono = false;
     let combo = null;    // channel combination for mono stacks
-    function defaultParams() { return { crop: 0.03, be: true, beStr: 1, neutral: true, wb: [1, 1, 1], black: 0, mid: 0.25, white: 1, auto: true, contrast: 0.15, sat: 0.4, nr: 0.3, sharp: 0.2, starRed: 0, hdr: 0, title: '' }; }
+    function defaultParams(planetary = false) {
+      if (planetary) return { planetary: true, crop: 0, be: false, beStr: 0, neutral: false, wb: [1, 1, 1], black: 0, mid: 0.4, white: 1, auto: true, contrast: 0.1, sat: 0.35, nr: 0.05, sharp: 0, starRed: 0, hdr: 0, wave: 0.9, waveFine: 1, rgbAlign: true, title: '' };
+      return { crop: 0.03, be: true, beStr: 1, neutral: true, wb: [1, 1, 1], black: 0, mid: 0.25, white: 1, auto: true, contrast: 0.15, sat: 0.4, nr: 0.3, sharp: 0.2, starRed: 0, hdr: 0, wave: 0, title: '' };
+    }
 
     async function loadStack(id) {
       const meta = G.s.stacks.find((s) => s.id === id); if (!meta) return;
       const d = await idbGet('stack:' + id); if (!d) { toast('Stack data missing.', 'warn'); return; }
       src = { ...d, W: meta.W, H: meta.H, nc: meta.nc, meta };
       mono = meta.nc === 1; combo = mono ? { R: id, G: id, B: id, L: null } : null;
-      P = defaultParams(); P.title = meta.target;
+      P = defaultParams(!!meta.planetary); P.title = meta.target;
       await rebuild(); renderPanel();
     }
     // resample a stack onto the grid of the reference stack (for multi-filter combination)
@@ -244,6 +355,7 @@ export const pixellabApp = {
       const CW = W - 2 * cx, CH = H - 2 * cy;
       const crop = (a) => { const o = new Float32Array(CW * CH); for (let y = 0; y < CH; y++) o.set(a.subarray((y + cy) * W + cx, (y + cy) * W + cx + CW), y * CW); return o; };
       work = { W: CW, H: CH, r: crop(r), g: crop(g), b: crop(b) };
+      if (P.rgbAlign) rgbAlign(work);
       if (P.be) for (const k of ['r', 'g', 'b']) subtractBackground(work[k], CW, CH, P.beStr);
       if (P.neutral) neutralize(work);
       asinhHDR(work, P.hdr);
@@ -251,6 +363,7 @@ export const pixellabApp = {
       render();
     }
     function autoStretchParams() {
+      if (P.planetary) { const s = sample(lum(work)); P.black = s[Math.floor(s.length * 0.3)] * 1.02; P.white = Math.max(P.black + 1e-4, s[s.length - 1] * 1.03); P.mid = 0.4; return; }
       const L = lum(work); const s = sample(L); const med = s[s.length >> 1]; const mad = s.map((v) => Math.abs(v - med)).sort((a, b) => a - b)[s.length >> 1] * 1.4826;
       P.black = Math.max(0, med - 2.5 * mad); const hi = s[Math.floor(s.length * 0.9995)] || 1; P.white = Math.max(P.black + 1e-4, Math.min(1, hi * 1.05));
       const mN = (med - P.black) / (P.white - P.black); const T = 0.2; P.mid = mN <= 0 ? 0.5 : ((T - 1) * mN) / ((2 * T - 1) * mN - T);
@@ -290,7 +403,9 @@ export const pixellabApp = {
         return h('div', { class: 'sl' }, h('span', {}, label), h('input', { type: 'range', min, max, step, value: P[k], oninput: (e) => { P[k] = +e.target.value; lab.textContent = fmt(P[k]); if (k === 'black' || k === 'mid' || k === 'white') P.auto = false; onCh(); } }), lab);
       };
       const chk = (label, k, onCh) => h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: P[k], onchange: (e) => { P[k] = e.target.checked; onCh(); } }), label);
-      panel.append(h('div', { class: 'card' }, h('h3', {}, '1 · Crop & gradients'), slider('Crop edges', 'crop', 0, 0.2, 0.005, rebuild, (v) => `${(v * 100).toFixed(1)}%`), chk('Background extraction (remove light-pollution gradient)', 'be', rebuild), slider('Strength', 'beStr', 0, 1, 0.05, rebuild)));
+      if (P.planetary) panel.append(h('div', { class: 'card' }, h('h3', {}, '1 · Planetary'), chk('RGB align (undo atmospheric dispersion)', 'rgbAlign', rebuild),
+        slider('Wavelets (detail)', 'wave', 0, 2.5, 0.01), slider('Finest layer', 'waveFine', 0, 2, 0.01), h('div', { class: 'small muted' }, 'Lucky stacks are soft until sharpened. Push the wavelets until detail pops — but stop before noise and dark rings at the limb appear.')));
+      else panel.append(h('div', { class: 'card' }, h('h3', {}, '1 · Crop & gradients'), slider('Crop edges', 'crop', 0, 0.2, 0.005, rebuild, (v) => `${(v * 100).toFixed(1)}%`), chk('Background extraction (remove light-pollution gradient)', 'be', rebuild), slider('Strength', 'beStr', 0, 1, 0.05, rebuild)));
       panel.append(h('div', { class: 'card' }, h('h3', {}, '2 · Color calibration'), chk('Neutralize background', 'neutral', rebuild),
         ...['Red', 'Green', 'Blue'].map((c, i) => { const lab = h('b', {}, P.wb[i].toFixed(2)); return h('div', { class: 'sl' }, h('span', {}, c), h('input', { type: 'range', min: 0.5, max: 1.8, step: 0.01, value: P.wb[i], oninput: (e) => { P.wb[i] = +e.target.value; lab.textContent = P.wb[i].toFixed(2); render(); } }), lab); })));
       panel.append(h('div', { class: 'card' }, h('h3', {}, '3 · Stretch (histogram transformation)'),
@@ -306,6 +421,7 @@ export const pixellabApp = {
       if (!lastCanvas || !work) return;
       const out = process(work, P);
       const sc = scoreImage(out, work, src.meta, P);
+      try { ensureSpace(finalBytes(src.meta), 'the exported image'); } catch (e) { toast(e.message, 'bad', 8000); return; }
       const id = uid();
       const url = lastCanvas.toDataURL('image/jpeg', 0.9);
       const thumbC = document.createElement('canvas'); const tw = 360; thumbC.width = tw; thumbC.height = Math.round(tw * work.H / work.W); thumbC.getContext('2d').drawImage(lastCanvas, 0, 0, thumbC.width, thumbC.height);
@@ -372,6 +488,22 @@ function blur(a, W, H, r) {
   for (let x = 0; x < W; x++) { let s = 0; for (let y = -r; y <= r; y++) s += t[Math.min(H - 1, Math.max(0, y)) * W + x]; for (let y = 0; y < H; y++) { o[y * W + x] = s / (2 * r + 1); s += t[Math.min(H - 1, y + r + 1) * W + x] - t[Math.max(0, y - r) * W + x]; } }
   return o;
 }
+// Shift R and B so their centroids match G (atmospheric dispersion on planets)
+export function rgbAlign(w) {
+  const { W, H } = w;
+  const cen = (a) => { let mx = 0; for (let i = 0; i < a.length; i++) if (a[i] > mx) mx = a[i]; const th = mx * 0.25; let sx = 0, sy = 0, sw = 0; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const v = a[y * W + x] - th; if (v > 0) { sx += x * v; sy += y * v; sw += v; } } return sw ? [sx / sw, sy / sw] : [W / 2, H / 2]; };
+  const g = cen(w.g);
+  for (const k of ['r', 'b']) {
+    const c = cen(w[k]), dx = c[0] - g[0], dy = c[1] - g[1]; if (Math.hypot(dx, dy) < 0.05) continue;
+    const a = w[k], o = new Float32Array(a.length);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const fx = x + dx, fy = y + dy, x0 = Math.floor(fx), y0 = Math.floor(fy); if (x0 < 0 || y0 < 0 || x0 >= W - 1 || y0 >= H - 1) continue;
+      const u = fx - x0, v = fy - y0, i = y0 * W + x0;
+      o[y * W + x] = a[i] * (1 - u) * (1 - v) + a[i + 1] * u * (1 - v) + a[i + W] * (1 - u) * v + a[i + W + 1] * u * v;
+    }
+    w[k] = o;
+  }
+}
 export function process(w, P) {
   const { W, H } = w, n = W * H;
   const mtf = (x, m) => (x <= 0 ? 0 : x >= 1 ? 1 : ((m - 1) * x) / ((2 * m - 1) * x - m));
@@ -382,6 +514,12 @@ export function process(w, P) {
   });
   // star reduction (min filter on bright compact features)
   if (P.starRed > 0) for (const a of ch) { const m = new Float32Array(a); for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) { const i = y * W + x; let mn = a[i]; for (const d of [-1, 1, -W, W]) mn = Math.min(mn, a[i + d]); m[i] = mn; } for (let i = 0; i < n; i++) a[i] = a[i] * (1 - P.starRed) + m[i] * P.starRed; }
+  // wavelet sharpening (à trous-style detail layers at 1, 2 and 4 px), for lucky-imaging stacks
+  if (P.wave > 0) for (const a of ch) {
+    const b1 = blur(a, W, H, 1), b2 = blur(b1, W, H, 2), b3 = blur(b2, W, H, 4);
+    const f = P.waveFine ?? 1;
+    for (let i = 0; i < n; i++) a[i] += P.wave * (1.6 * f * (a[i] - b1[i]) + 1.2 * (b1[i] - b2[i]) + 0.45 * (b2[i] - b3[i]));
+  }
   // noise reduction: blend toward blur, weighted by darkness (protect bright detail)
   if (P.nr > 0 || P.sharp > 0) for (const a of ch) {
     const b1 = blur(a, W, H, 1), b2 = P.nr > 0 ? blur(a, W, H, 2) : null;
@@ -451,9 +589,10 @@ export async function autoStack({ target, filter = null, method = 'kappa', minSc
   const id = uid(); const integ = sel.reduce((a, f) => a + f.exp, 0);
   const meta = { id, target: L.target || 'Untitled', n: sel.length, integration: integ, filter: L.filter, cam: L.cam, optic: L.optic, focal: L.focal, W: res.W, H: res.H, nc: res.nc, method, ref: res.refPointing, scale: res.scale, created: G.s.time, darks: job.darks.length, flats: job.flats.length,
     quality: qualityOf(sel), loc: L.loc, sessions: [...new Set(sel.map((f) => f.session))].length };
+  meta.bytes = stackBytes(meta); ensureSpace(meta.bytes, 'the stacked image');
   await idbSet('stack:' + id, { data: res.data, coverage: res.coverage });
   G.s.stacks.push(meta);
-  while (G.s.stacks.length > 14) { const old = G.s.stacks.shift(); idbDel('stack:' + old.id); }
+  while (G.s.stacks.length > 40) { const old = G.s.stacks.shift(); idbDel('stack:' + old.id); }
   save(true); emit('stacked', meta);
   return meta;
 }
@@ -482,21 +621,28 @@ export async function autoProcess({ target, preset = 'auto', title, params = {} 
   }
   const W = ref.W, H = ref.H;
   if (L) { const nr = new Float32Array(W * H), ng = new Float32Array(W * H), nb = new Float32Array(W * H); for (let i = 0; i < W * H; i++) { const y = (r[i] + g[i] + b[i]) / 3 + 1e-6; const k = L[i] / y; nr[i] = r[i] * k; ng[i] = g[i] * k; nb[i] = b[i] * k; } r = nr; g = ng; b = nb; }
-  const P = { crop: 0.03, be: true, beStr: 1, neutral: true, wb: [1, 1, 1], contrast: 0.15, sat: 0.4, nr: 0.3, sharp: 0.2, starRed: 0, hdr: 0, midScale: 1, ...params };
+  const planetary = !!ref.planetary;
+  const P = planetary ? { planetary: true, crop: 0, be: false, beStr: 0, neutral: false, wb: [1, 1, 1], contrast: 0.1, sat: 0.35, nr: 0.05, sharp: 0, starRed: 0, hdr: 0, wave: 0.9, waveFine: 1, rgbAlign: true, midScale: 1, ...params }
+    : { crop: 0.03, be: true, beStr: 1, neutral: true, wb: [1, 1, 1], contrast: 0.15, sat: 0.4, nr: 0.3, sharp: 0.2, starRed: 0, hdr: 0, midScale: 1, ...params };
   const cx = Math.round(W * P.crop), cy = Math.round(H * P.crop), CW = W - 2 * cx, CH = H - 2 * cy;
   const crop = (a) => { const o = new Float32Array(CW * CH); for (let y = 0; y < CH; y++) o.set(a.subarray((y + cy) * W + cx, (y + cy) * W + cx + CW), y * CW); return o; };
   const work = { W: CW, H: CH, r: crop(r), g: crop(g), b: crop(b) };
+  if (P.rgbAlign) rgbAlign(work);
   if (P.be) for (const k of ['r', 'g', 'b']) subtractBackground(work[k], CW, CH, P.beStr);
   if (P.neutral) neutralize(work);
   asinhHDR(work, P.hdr);
+  if (planetary) { const sp = sample(lum(work)); P.black = sp[Math.floor(sp.length * 0.3)] * 1.02; P.white = Math.max(P.black + 1e-4, sp[sp.length - 1] * 1.03); P.mid = 0.4 * P.midScale; }
   // auto stretch, then optional midtone scaling (midScale < 1 = gentler stretch to protect bright cores)
-  const Ls = lum(work); const s = sample(Ls); const med = s[s.length >> 1]; const mad = s.map((v) => Math.abs(v - med)).sort((x, y) => x - y)[s.length >> 1] * 1.4826;
-  P.black = Math.max(0, med - 2.5 * mad); const hi = s[Math.floor(s.length * 0.9995)] || 1; P.white = Math.max(P.black + 1e-4, Math.min(1, hi * 1.05));
-  const mN = (med - P.black) / (P.white - P.black); const T = 0.2; P.mid = mN <= 0 ? 0.5 : ((T - 1) * mN) / ((2 * T - 1) * mN - T);
-  P.mid = Math.max(0.0005, Math.min(0.5, P.mid * P.midScale));
+  if (!planetary) {
+    const Ls = lum(work); const s = sample(Ls); const med = s[s.length >> 1]; const mad = s.map((v) => Math.abs(v - med)).sort((x, y) => x - y)[s.length >> 1] * 1.4826;
+    P.black = Math.max(0, med - 2.5 * mad); const hi = s[Math.floor(s.length * 0.9995)] || 1; P.white = Math.max(P.black + 1e-4, Math.min(1, hi * 1.05));
+    const mN = (med - P.black) / (P.white - P.black); const T = 0.2; P.mid = mN <= 0 ? 0.5 : ((T - 1) * mN) / ((2 * T - 1) * mN - T);
+    P.mid = Math.max(0.0005, Math.min(0.5, P.mid * P.midScale));
+  }
   const out = process(work, P);
   const c = document.createElement('canvas'); c.width = CW; c.height = CH; c.getContext('2d').putImageData(new ImageData(out.rgba, CW, CH), 0, 0);
   const sc = scoreImage(out, work, ref, P);
+  ensureSpace(finalBytes(ref), 'the exported image');
   const id = uid();
   const thumbC = document.createElement('canvas'); thumbC.width = 360; thumbC.height = Math.round(360 * CH / CW); thumbC.getContext('2d').drawImage(c, 0, 0, thumbC.width, thumbC.height);
   await idbSet('final:' + id, c.toDataURL('image/jpeg', 0.9)); await idbSet('finalthumb:' + id, thumbC.toDataURL('image/jpeg', 0.85));

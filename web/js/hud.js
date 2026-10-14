@@ -24,7 +24,15 @@ export function createHud(root, cb) {
   const chatLog = h('div', { class: 'chat-log' });
   const chatIn = h('input', { class: 'chat-in', placeholder: 'Say something to your team…', maxlength: 300 });
   const chat = h('div', { class: 'hud-chat' }, chatLog, chatIn);
-  const el = h('div', { class: 'hud' }, top, warn, rig, sess, xh, prompt, hint, chat);
+  // compass strip + sky markers (updated every rendered frame)
+  const compassTape = h('div', { class: 'compass-tape' });
+  const compass = h('div', { class: 'hud-compass' }, compassTape, h('div', { class: 'compass-caret' }), h('div', { class: 'compass-read mono' }));
+  for (let d = -360; d <= 720; d += 5) {
+    const lab = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' }[((d % 360) + 360) % 360];
+    compassTape.append(h('span', { class: 'ct' + (d % 15 === 0 ? ' major' : '') + (lab ? ' cd' : ''), style: { left: `${(d + 360) * 4}px` } }, d % 15 === 0 ? (lab || String(((d % 360) + 360) % 360)) : ''));
+  }
+  const markers = h('div', { class: 'hud-markers' });
+  const el = h('div', { class: 'hud' }, top, compass, markers, warn, rig, sess, xh, prompt, hint, chat);
   root.append(el);
 
   chatIn.addEventListener('keydown', (e) => {
@@ -58,7 +66,8 @@ export function createHud(root, cb) {
     const sunState = env.sunAlt > -0.8 ? 'DAY' : env.sunAlt > -6 ? 'CIVIL TWILIGHT' : env.sunAlt > -12 ? 'NAUTICAL TW.' : env.sunAlt > -18 ? 'ASTRO TW.' : 'DARK';
     sky.innerHTML = '';
     sky.append(h('div', { class: 'panel-title' }, 'SKY'), row('SUN', `${env.sunAlt.toFixed(1)}° ${sunState}`), row('MOON', `${Math.round(env.moonIllum * 100)}% ${env.moonAlt > 0 ? '↑ ' + env.moonAlt.toFixed(0) + '°' : 'BELOW'}`),
-      row('CLOUDS', `${Math.round(env.clouds * 100)} %`, env.clouds > 0.4 ? 'warn' : ''), row('SEEING', `${env.seeing.toFixed(1)}″`), row('TEMP / DEW PT', `${env.temp.toFixed(1)} / ${env.dewPoint.toFixed(1)} °C`), row('SQM', `${loc.sqm.toFixed(2)} · B${loc.bortle}`));
+      row('CLOUDS', `${Math.round(env.clouds * 100)} %`, env.clouds > 0.4 ? 'warn' : ''), row('SEEING', `${env.seeing.toFixed(1)}″`), row('TEMP / DEW PT', `${env.temp.toFixed(1)} / ${env.dewPoint.toFixed(1)} °C`), row('SQM', `${loc.sqm.toFixed(2)} · B${loc.bortle}`),
+      row('GEOMAG', env.aurora && env.aurora.strength > 0.05 ? `KP ${env.kp.toFixed(1)} · AURORA ${env.aurora.strength > 0.5 ? 'STRONG' : 'VISIBLE'}` : `KP ${env.kp.toFixed(1)}`, env.aurora && env.aurora.strength > 0.05 ? 'ok' : ''));
     // cautions
     const flags = [];
     if (n.capOn) flags.push('LENS CAP ON');
@@ -96,8 +105,40 @@ export function createHud(root, cb) {
       for (const pl of Object.values(MP.players)) sess.append(h('div', { class: 'row' }, h('span', { style: { color: pl.color } }, `● ${pl.name}${pl.id === MP.myId ? ' (YOU)' : ''}${pl.host ? ' ★' : ''}`), h('span', { class: 'lbl' }, pl.pose ? (pl.pose.at === 'laptop' ? 'AT LAPTOP' : 'OUTSIDE') : '')));
     }
   }
+  const mk = {}; let lastBodies = 0, bodies = [];
+  function marker(id, cls, label) {
+    if (!mk[id]) { mk[id] = h('div', { class: 'sky-mk ' + cls }, h('i'), h('b', {}, label), h('small')); markers.append(mk[id]); }
+    return mk[id];
+  }
+  function place(m, p, sub) {
+    if (!p) { m.style.display = 'none'; return; }
+    const pad = 28, off = p.x < pad || p.y < pad || p.x > p.w - pad || p.y > p.h - pad;
+    m.style.display = ''; m.classList.toggle('edge', off);
+    m.style.transform = `translate(${Math.max(pad, Math.min(p.w - pad, p.x))}px, ${Math.max(pad + 60, Math.min(p.h - pad - 90, p.y))}px)`;
+    m.lastChild.textContent = sub || '';
+  }
+  function updateView(w) {
+    const n = G.s.night; if (!n || document.body.classList.contains('hud-off')) return;
+    const v = w.viewAltAz();
+    compassTape.style.transform = `translateX(${-(v.az + 360) * 4}px)`;
+    compass.lastChild.textContent = `${Math.round(v.az).toString().padStart(3, '0')}° · ALT ${v.alt.toFixed(0)}°`;
+    const loc = S.locNow(), L = A.lst(G.s.time, loc.lon);
+    const p = S.pointing();
+    place(marker('scope', 'scope', 'SCOPE'), p && w.projectAltAz(p.alt, p.az), p ? `${p.alt.toFixed(0)}°` : '');
+    const t = G.s.target;
+    if (t) { const aa = A.radec2altaz(t.ra, t.dec, L, loc.lat); const m = marker('target', 'target', ''); m.children[1].textContent = t.name.toUpperCase(); place(m, w.projectAltAz(aa.alt, aa.az), aa.alt < 0 ? 'BELOW HORIZON' : p ? `${A.sep(p.ra, p.dec, t.ra, t.dec).toFixed(1)}° FROM SCOPE` : ''); }
+    else if (mk.target) mk.target.style.display = 'none';
+    if (performance.now() - lastBodies > 2000) { lastBodies = performance.now(); bodies = ['Venus', 'Mars', 'Jupiter', 'Saturn', 'Mercury'].map((nm) => S.bodyInfo(nm)); }
+    const dark = S.envAt(G.s.time).sunAlt < -4;
+    for (const b of bodies) {
+      const aa = A.radec2altaz(b.ra, b.dec, L, loc.lat), m = marker('pl-' + b.name, 'planet', b.name.toUpperCase());
+      const pp = dark && aa.alt > 0 ? w.projectAltAz(aa.alt, aa.az) : null;
+      if (pp && (pp.x < 0 || pp.y < 0 || pp.x > pp.w || pp.y > pp.h)) { m.style.display = 'none'; continue; }
+      place(m, pp, '');
+    }
+  }
   return {
-    el, update,
+    el, update, updateView,
     setPrompt(t) { prompt.textContent = t || ''; prompt.style.display = t ? '' : 'none'; },
     setGrab(g) { el.classList.toggle('grabbing', g); },
     openChat() { chat.style.display = ''; chat.classList.add('typing'); chatIn.focus(); },

@@ -5,6 +5,9 @@ import { GEAR, LOC, rigInfo, sensorAt, horizonAlt, FILTERS } from './gear.js';
 import { actualWeather, wxAt, NIGHT_START_HOUR } from './weather.js';
 import { mulberry32, gaussFactory, hashStr, uid } from './util.js';
 import { renderRecipe, makeThumb } from './imaging.js';
+import { planetInfo, moonInfo, PLANET_NAMES } from './planets.js';
+import { auroraState, kpSeries } from './aurora.js';
+import { ensureSpace, frameBytes } from './storage.js';
 
 export const WARPS = [1, 5, 20, 60, 200, 600];
 export const T = { warp: 1, busy: false, waiters: [], exposure: null, lastFrame: null, guideHist: [], lastGuideT: 0 };
@@ -112,20 +115,44 @@ export function envAt(ms) {
   const sun = A.sunAltAz(ms, lat, lon), moon = A.moonAltAz(ms, lat, lon), ph = A.moonPhase(ms);
   const hOff = n ? hoursSinceNightStart(ms) : 4;
   const wx = n ? n.wx : actualWeather(G.s.location, dayIndexOf(ms, loc.tz));
-  return {
+  const env = {
     lat, lon, loc, sunAlt: sun.alt, sunAz: sun.az, moonAlt: moon.alt, moonAz: moon.az, moonRa: moon.ra, moonDec: moon.dec,
     moonPhase: ph.phaseAngle, moonIllum: ph.illum,
     clouds: wxAt(wx.clouds, hOff), transp: wxAt(wx.transp, hOff), seeing: wxAt(wx.seeing, hOff), temp: wxAt(wx.temp, hOff),
     dewPoint: wxAt(wx.dew, hOff), hum: wxAt(wx.hum, hOff), wind: wxAt(wx.wind, hOff),
     cloudSeed: wx.seed, cloudDrift: hOff * (0.6 + wxAt(wx.wind, hOff) / 18), windDir: (wx.seed % 360),
     dew: n ? n.dew : 0, smudge: n ? n.smudge || 0 : 0,
+    kp: wxAt(wx.kp || (wx.kp = kpSeries(dayIndexOf(ms, loc.tz))), hOff),
   };
+  env.aurora = auroraState(lat, lon, env.kp, sun.alt);
+  if (env.aurora.strength) env.aurora.strength *= 1 - 0.85 * env.clouds;
+  return env;
 }
 function hoursSinceNightStart(ms) {
   const n = night(); const loc = locNow();
   const p = localParts(n.noon, loc.tz);
   const start = localMs(p.y, p.mo, p.d, NIGHT_START_HOUR, 0, loc.tz);
   return (ms - start) / 3600000;
+}
+
+// ------------------------------------------------------------------ solar-system bodies
+// Apparent (topocentric for the Moon) positions of the planets & Moon at `ms`.
+export function bodyInfo(name, ms = G.s.time) {
+  const loc = locNow();
+  if (name === 'Moon') {
+    const b = moonInfo(ms); const aa = A.moonAltAz(ms, loc.lat, loc.lon); // includes parallax
+    const t = A.altaz2radec(aa.alt, aa.az, A.lst(ms, loc.lon), loc.lat);
+    return { ...b, ra: t.ra, dec: t.dec };
+  }
+  return planetInfo(name, ms);
+}
+export function bodiesNear(ra, dec, radiusDeg, ms = G.s.time) {
+  const out = [];
+  for (const nm of [...PLANET_NAMES, 'Moon']) {
+    const b = bodyInfo(nm, ms);
+    if (A.sep(ra, dec, b.ra, b.dec) < radiusDeg + (b.diam / 3600) * 1.3 + (nm === 'Jupiter' ? 0.25 : 0)) out.push(b);
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------ pointing
@@ -456,6 +483,8 @@ function makePath(exp, startPt) {
     for (const g of gusts) if (tau >= g.tau) { const k = Math.exp(-(tau - g.tau) / 2.5); dE += Math.cos(g.th) * g.amp * k; dN += Math.sin(g.th) * g.amp * k; }
     path.push([dE, dN, A.norm180(pa - startPt.pa)]);
   }
+  // short exposures freeze the atmosphere's tip-tilt: the whole image jumps around by a fraction of the seeing
+  if (exp < 0.5) { const s = env.seeing * 0.32; const tx = gauss() * s, ty = gauss() * s; for (const p of path) { p[0] += tx; p[1] += ty; } }
   // jitter (rms arcsec), folded into the PSF
   let jitter;
   if (guided) jitter = guideRms();
@@ -465,6 +494,11 @@ function makePath(exp, startPt) {
 }
 
 export function isExposing() { return !!T.exposure; }
+// Camera frame rate limit: USB3 bandwidth ~ 380 MB/s at 8-bit; small ROIs read out faster
+export function maxFps(cam, roi) {
+  const px = roi ? roi.w * roi.h : cam.w * cam.h;
+  return Math.min(cam.fpsMax || (cam.type === 'dslr' ? 30 : 60), 3.2e8 / px);
+}
 
 // params: {type, exp, gain, offset, bin, roi, target, save, preview, panelLevel}
 function _expose(params) {
@@ -494,10 +528,17 @@ function _expose(params) {
     roi: params.roi || null, quality: G.s.settings.quality,
     seed: hashStr(id || uid()),
     target: params.target || '', label: params.label || '',
+    bodies: bodiesNear(pt.ra, pt.dec, Math.hypot(ri.fovW, ri.fovH) / 2 + 0.05, G.s.time + exp * 500),
+    adc: ri.hasADC,
   };
+  if (recipe.type === 'video') {
+    recipe.frames = Math.max(10, Math.round(params.frames || 1000));
+    recipe.fps = Math.min(maxFps(cam, params.roi), 1 / exp);
+  }
+  if (id) { try { ensureSpace(frameBytes({ type: recipe.type, cam: cam.id, recipe, bin: recipe.bin, frames: recipe.frames }), recipe.type === 'video' ? 'this video' : 'this frame'); } catch (e) { return Promise.reject(e); } }
   if (recipe.type === 'flat' && n.panelOn) recipe.flatSrc = 'panel';
   else if (n.panelOn) recipe.capOn = true; // panel covers the aperture
-  const download = cam.type === 'dslr' ? 1.6 : 0.9 * (params.roi ? 0.3 : 1);
+  const download = recipe.type === 'video' ? recipe.frames / recipe.fps - exp + 1 : cam.type === 'dslr' ? 1.6 : 0.9 * (params.roi ? 0.3 : 1);
   return new Promise((resolve, reject) => {
     T.exposure = { recipe, t0: G.s.time, end: G.s.time + (exp + download) * 1000, exp, resolve, reject, disturb: [], params, rendering: false };
     n.cam.duty = Math.min(1, n.cam.duty + 0.05);
@@ -536,9 +577,11 @@ async function finishExposure() {
       recipe: r, scale: res.scale,
     };
     T.lastFrame = { meta, res };
-    if (r.id && !r.roi) {
+    if (r.id && (!r.roi || r.type === 'video')) {
       G.s.frames.push(meta); G.s.stats.frames++;
       if (r.type === 'light') G.s.stats.integration += r.exp;
+      meta.bytes = frameBytes(meta);
+      if (r.type === 'video') { meta.frames = r.frames; meta.fps = +r.fps.toFixed(1); meta.bodies = (res.bodies || []).map((b) => b.name); }
       const sess = G.s.sessions.find((s) => s.id === meta.session); if (sess) sess.frames++;
       if (res.thumb) makeThumb(res.thumb).then((url) => idbSet('thumb:' + r.id, url));
       save();
@@ -677,7 +720,12 @@ function _setProp(path, value) {
   emit('mount');
   save();
 }
-function _setTarget(t) { G.s.target = t ? { id: t.id, name: t.name || t.id, ra: t.ra, dec: t.dec, size: t.size || 0, type: t.type || '' } : null; save(); emit('target', G.s.target); }
+function _setTarget(t) { G.s.target = t ? { id: t.id, name: t.name || t.id, ra: t.ra, dec: t.dec, size: t.size || 0, type: t.type || '', body: t.body || null } : null; save(); emit('target', G.s.target); }
+// planets & the Moon move against the stars: keep a body target's coordinates current
+export function refreshBodyTarget() {
+  const t = G.s.target; if (!t || !t.body || !G.s.location) return;
+  const b = bodyInfo(t.body); t.ra = b.ra; t.dec = b.dec; t.size = b.diam / 60;
+}
 function _setRig(rig) {
   const old = G.s.rig; G.s.rig = rig;
   const n = night();

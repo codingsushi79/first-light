@@ -55,10 +55,35 @@ export class World {
     // sky dome (world-fixed)
     this.skyMat = new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false,
-      uniforms: { sunDir: { value: v3(0, -1, 0) }, moonDir: { value: v3(0, -1, 0) }, sunAlt: { value: -30 }, moonBright: { value: 0 }, lp: { value: 0.3 }, lpDir: { value: v3(0, 0, 1) }, lpColor: { value: new THREE.Color(0.85, 0.6, 0.42) }, cloud: { value: 0 }, natural: { value: 1 } },
+      uniforms: { sunDir: { value: v3(0, -1, 0) }, moonDir: { value: v3(0, -1, 0) }, sunAlt: { value: -30 }, moonBright: { value: 0 }, lp: { value: 0.3 }, lpDir: { value: v3(0, 0, 1) }, lpColor: { value: new THREE.Color(0.85, 0.6, 0.42) }, cloud: { value: 0 }, natural: { value: 1 }, auStr: { value: 0 }, auPole: { value: 0 }, auArc: { value: 20 }, uTime: { value: 0 } },
       vertexShader: `varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_Position.z = gl_Position.w; }`,
       fragmentShader: `
-        varying vec3 vDir; uniform vec3 sunDir, moonDir, lpDir, lpColor; uniform float sunAlt, moonBright, lp, cloud, natural;
+        varying vec3 vDir; uniform vec3 sunDir, moonDir, lpDir, lpColor; uniform float sunAlt, moonBright, lp, cloud, natural, auStr, auPole, auArc, uTime;
+        float h1(float x){ return fract(sin(x*127.1)*43758.5453); }
+        float n1(float x){ float i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f); return mix(h1(i), h1(i+1.0), f); }
+        float fb(float x){ return 0.5*n1(x) + 0.25*n1(x*2.03+7.0) + 0.125*n1(x*4.1+3.0) + 0.0625*n1(x*8.3+1.0); }
+        vec3 aurora(vec3 d){
+          if (auStr <= 0.0) return vec3(0.0);
+          float al = asin(clamp(max(d.y, 0.0),-1.0,1.0)); float az = degrees(atan(d.x, -d.z));
+          float da = radians(mod(az - auPole + 540.0, 360.0) - 180.0);
+          float q = degrees(atan(sin(al), cos(al)*cos(da)));
+          float sA = degrees(asin(clamp(cos(al)*sin(da), -1.0, 1.0)));
+          float side = exp(-pow(sA/80.0, 2.0));
+          float g = 0.0, r = 0.0;
+          for (int k = 0; k < 2; k++) {
+            float qa = auArc - float(k) * 28.0; float w = k == 0 ? 1.0 : 0.55;
+            if (k == 1 && !(auStr > 0.6 && auArc > 40.0)) break;
+            float up = qa < 90.0 ? 1.0 : -1.0;
+            float x = (q - qa) * up + (fb(sA*0.04 + uTime/900.0 + qa) - 0.5) * 9.0;
+            float lower = smoothstep(-4.0, 1.2, x);
+            float ray = 0.3 + 0.7*pow(fb(sA*0.45 + uTime/240.0 + qa*1.3), 1.5)*1.7;
+            g += w * lower * exp(-max(0.0, x)/10.0) * ray;
+            r += w * lower * smoothstep(7.0, 20.0, x) * exp(-max(0.0, x-16.0)/24.0) * (0.4 + ray*0.5);
+          }
+          float pulse = 0.55 + 0.45*fb(uTime/600.0 + 3.3);
+          float S = auStr * side * pulse * smoothstep(-0.02, 0.04, d.y);
+          return (vec3(0.08,0.85,0.35) * g + vec3(0.7,0.06,0.18) * r * 0.5) * S * 0.42;
+        }
         void main(){
           vec3 d = normalize(vDir); float alt = max(d.y, 0.0);
           float hz = exp(-alt * 6.0);
@@ -77,7 +102,7 @@ export class World {
           // moonlight scattering
           float md = max(dot(d, moonDir), 0.0);
           vec3 moon = moonBright * (vec3(0.05,0.08,0.16) * (0.4 + 0.6*hz) + vec3(0.6,0.6,0.55) * pow(md, 60.0) + vec3(0.12,0.13,0.16) * pow(md, 8.0));
-          vec3 col = night + lpc + tw + moon;
+          vec3 col = night + lpc + tw + moon + aurora(d);
           col = mix(col, col * 0.5 + lpColor * lp * 0.12 + vec3(0.02) * moonBright, cloud * 0.6);
           gl_FragColor = vec4(col, 1.0);
         }`,
@@ -628,6 +653,9 @@ export class World {
     if (this.keys.KeyA || this.keys.ArrowLeft) P.pos.addScaledVector(right, -sp);
     if (this.keys.KeyD || this.keys.ArrowRight) P.pos.addScaledVector(right, sp);
     if (P.pos.length() > 11) P.pos.setLength(11);
+    // footsteps
+    { const moved = this._lastPos ? Math.hypot(P.pos.x - this._lastPos.x, P.pos.z - this._lastPos.z) : 0; this._lastPos = P.pos.clone(); this._stride = (this._stride || 0) + moved;
+      if (this._stride > 0.72) { this._stride = 0; window.dispatchEvent(new CustomEvent('fl-sfx', { detail: { name: 'step', surface: S.locNow()?.biome } })); } }
     P.pos.y = 1.65 + Math.sin(t * 1.3) * 0.003;
     this.camera.position.copy(P.pos);
     this.camera.rotation.set(P.pitch, P.yaw, 0, 'YXZ');
@@ -648,10 +676,27 @@ export class World {
     const lpLevel = Math.log10(1 + Math.max(0, (A.magToNL(loc.sqm) - A.magToNL(21.95)) / A.magToNL(18.5)) * 3) * 0.75;
     u.lp.value = lpLevel * 1.4 * (1 + env.clouds * 1.5); u.lpDir.value.copy(altAzToVec(0, loc.lpAz));
     u.cloud.value = env.clouds;
+    const au = env.aurora || {}; u.auStr.value = au.strength || 0; u.auPole.value = au.poleAz || 0; u.auArc.value = au.arcAlt || 20; u.uTime.value = G.s.time / 1000 % 1e5;
     // naked-eye limiting magnitude (approx from total sky brightness)
     const skyNL = A.magToNL(loc.sqm) + A.moonSkyNL(env.moonPhase, env.moonAlt, 60, 60) + A.twilightNL(env.sunAlt, 90);
     const skyMag = A.nlToMag(skyNL);
     const lim = THREE.MathUtils.clamp(7.93 - 5 * Math.log10(Math.pow(10, 4.316 - skyMag / 5) + 1), -2, 6.8);
+    // planets: bright non-twinkling points on the celestial sphere, refreshed every few sim-minutes
+    if (this.starMat && (!this.planetPts || Math.abs(G.s.time - (this._plT || 0)) > 120000)) {
+      this._plT = G.s.time;
+      const names = ['Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune'];
+      if (!this.planetPts) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(names.length * 3), 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(names.length * 3), 3));
+        geo.setAttribute('mag', new THREE.BufferAttribute(new Float32Array(names.length), 1));
+        this.planetPts = new THREE.Points(geo, this.starMat); this.planetPts.frustumCulled = false; this.planetPts.renderOrder = -6;
+        this.celestial.add(this.planetPts);
+      }
+      const g = this.planetPts.geometry;
+      names.forEach((nm, i) => { const b = S.bodyInfo(nm); const v = eqVec(b.ra, b.dec).multiplyScalar(SKY_R - 5); g.attributes.position.setXYZ(i, v.x, v.y, v.z); g.attributes.color.setXYZ(i, ...b.col); g.attributes.mag.setX(i, b.mag); });
+      g.attributes.position.needsUpdate = g.attributes.color.needsUpdate = g.attributes.mag.needsUpdate = true;
+    }
     if (this.starMat) { this.starMat.uniforms.limMag.value = lim; this.starMat.uniforms.time.value = t; this.starMat.uniforms.seeing.value = env.seeing; }
     this.mwMat.uniforms.strength.value = THREE.MathUtils.clamp((lim - 4.2) / 2.2, 0, 1) * 1.6 * (1 - env.clouds);
     // moon & sun
@@ -682,7 +727,16 @@ export class World {
     const prev = this.hover; this.hover = this.grab ? null : this.pick();
     if (prev !== this.hover) this.emit('hover', this.hover);
     this.renderer.render(this.scene, this.camera);
+    if (this.onView) try { this.onView(this); } catch (e) { console.warn(e); }
   }
+  // screen position of a sky direction (for HUD markers); null when behind the camera
+  projectAltAz(alt, az) {
+    const v = altAzToVec(alt, az, 500).add(this.camera.position).project(this.camera);
+    if (v.z > 1) return null;
+    const r = this.renderer.domElement.getBoundingClientRect();
+    return { x: (v.x * 0.5 + 0.5) * r.width, y: (-v.y * 0.5 + 0.5) * r.height, w: r.width, h: r.height };
+  }
+  viewAltAz() { return vecToAltAz(this.camera.getWorldDirection(v3(0, 0, 0))); }
   drawMoon(env) {
     const c = this.moonCanvas, g = c.getContext('2d'); const W = c.width, r = W * 0.45, cx = W / 2;
     g.clearRect(0, 0, W, W);

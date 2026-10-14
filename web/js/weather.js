@@ -2,6 +2,7 @@
 import { makeNoise, mulberry32, hashStr, smoothstep } from './util.js';
 import { LOC } from './gear.js';
 import { climate } from './geo.js';
+import { kpSeries } from './aurora.js';
 
 export const NIGHT_START_HOUR = 17; // local
 export const NIGHT_SLOTS = 16;      // 17:00 .. 08:00
@@ -43,6 +44,7 @@ export function actualWeather(locId, dayIndex) {
     out.transp.push(+tr.toFixed(2));
   }
   out.seeingBase = seeingBase;
+  out.kp = kpSeries(dayIndex, NIGHT_SLOTS);
   out._r = r();
   return out;
 }

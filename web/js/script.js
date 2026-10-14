@@ -6,8 +6,10 @@ import { GEAR, LOC, rigInfo } from './gear.js';
 import * as S from './session.js';
 import * as RT from './routines.js';
 import { findLocal, sesame } from './catalog.js';
-import { autoStack, autoProcess } from './apps/darkroom.js';
+import { autoStack, autoProcess, luckyStackVideo } from './apps/darkroom.js';
 import { publish } from './apps/social.js';
+import { uploadFinal } from './starshare-net.js';
+import { PREFS } from './menu.js';
 
 export const FILTER_NAMES = { L: 'f_L', R: 'f_R', G: 'f_G', B: 'f_B', HA: 'f_ha', OIII: 'f_oiii', SII: 'f_sii', LP: 'f_lp', DUAL: 'f_dual', NONE: null };
 const filterId = (n) => { const k = String(n).toUpperCase(); if (k in FILTER_NAMES) return FILTER_NAMES[k]; if (GEAR[n] && GEAR[n].kind === 'filter') return n; throw new Error(`Unknown filter “${n}” (use L R G B Ha OIII SII LP Dual)`); };
@@ -27,7 +29,9 @@ export const HELP = [
   ['polar-align [0.5]', 'Three-point polar alignment; turns the bolts until under N′.'],
   ['target M42 | target "Name" ra=84.5 dec=-3.9', 'Set the target (any catalog/SIMBAD name or coordinates).'],
   ['rotation 116', 'Rotate the camera so the frame top points this many ° east of north.'],
-  ['center', 'GoTo + plate solve + re-center.'],
+  ['center', 'GoTo + plate solve + re-center (planets: find the disk and center it).'],
+  ['video x3 exp=8ms gain=300 frames=2000 roi=640', 'Planetary videos for lucky imaging (roi 320 | 640 | 1024 | full).'],
+  ['lucky keep=10%', 'Lucky-stack the newest video of the target (then process + publish as usual).'],
   ['focus [auto|manual]', 'Autofocus (motor) or careful hand focus.'],
   ['guide', 'Calibrate and start guiding.'],
   ['options dither=4 focus=comp aftemp=1.5 minalt=30 flip=on', 'Sequence automation (focus: lock|start|temp|comp).'],
@@ -213,7 +217,25 @@ const CMDS = {
     if (Math.abs(d) > 0.2) { await S.rotateCamera(d); await S.waitSim(30); }
     say(`  Camera rotated to ${S.pointing().pa.toFixed(1)}°`);
   },
-  async center() { if (!G.s.target) throw new Error('No target set'); RT.R.abort = false; await RT.centerOn(G.s.target, (m) => say('  ' + m)); },
+  async center() { if (!G.s.target) throw new Error('No target set'); RT.R.abort = false; if (G.s.target.body) await RT.centerBody(G.s.target.body, (m) => say('  ' + m)); else await RT.centerOn(G.s.target, (m) => say('  ' + m)); },
+  async video(c) {
+    night(); const cam = S.rig().cam; const n = count(c.args[0] || 'x1');
+    const key = String(c.kv.roi || '640'); const dims = { 320: [320, 240], 640: [640, 480], 1024: [1024, 768] }[key] || [640, 480];
+    const roi = key === 'full' ? null : { cx: Math.floor(cam.w / 2), cy: Math.floor(cam.h / 2), w: Math.min(dims[0], cam.w), h: Math.min(dims[1], cam.h) };
+    for (let i = 0; i < n; i++) {
+      const fr = await S.expose({ type: 'video', exp: secs(c.kv.exp || '8ms'), gain: c.kv.gain !== undefined ? +c.kv.gain : cs().gain, offset: cs().offset, bin: 1, roi, frames: +(c.kv.frames || 2000), target: G.s.target ? G.s.target.name : 'Planet' });
+      say(`  Video ${i + 1}/${n}: ${fr.meta.frames} frames at ${fr.meta.fps} fps${(fr.res.bodies || []).length ? '' : ' — no planet in the field!'} · peak ${Math.round((fr.res.peakFrac || 0) * 100)}%`);
+    }
+  },
+  async lucky(c) {
+    if (!G.s.target) throw new Error('No target set');
+    const name = G.s.target.name.toLowerCase(); const keep = parseFloat(c.kv.keep || '10') / 100;
+    const vids = G.s.frames.filter((f) => f.type === 'video' && String(f.target).toLowerCase() === name);
+    if (!vids.length) throw new Error(`No videos of ${G.s.target.name}`);
+    const v = vids[vids.length - 1];
+    const m = await luckyStackVideo(v, keep, (msg) => { SR.progress = msg; emit('scriptprogress', msg); });
+    say(`  Lucky stack: best ${m.n} of ${v.frames} frames`);
+  },
   async focus(c) {
     const n = night(); const ri = S.rig(); const mode = (c.args[0] || 'auto').toLowerCase();
     if (mode === 'auto' && ri.hasAF && n.connected.focuser) { RT.R.abort = false; await RT.autofocus(() => {}, (m) => say('  ' + m)); return; }
@@ -259,7 +281,7 @@ const CMDS = {
     const f = G.s.finals.find((x) => x.id === id); f.script = SR.text; SR.lastFinal = id;
     say(`  Saved “${f.title}” — self-assessed score ${f.score.total}/100`); f.score.feedback.slice(0, 3).forEach((x) => say('   · ' + x));
   },
-  async publish() { const id = SR.lastFinal || (G.s.finals[G.s.finals.length - 1] || {}).id; if (!id) throw new Error('Nothing to publish'); if (!publish(id)) say('  (already published)'); else say('  Published on StarShare.'); },
+  async publish() { const id = SR.lastFinal || (G.s.finals[G.s.finals.length - 1] || {}).id; if (!id) throw new Error('Nothing to publish'); if (!publish(id)) { say('  (already published)'); return; } say('  Published on StarShare.'); if (PREFS.globalShare !== false) { try { await uploadFinal(G.s.finals.find((f) => f.id === id)); say('  Also posted to the StarShare community.'); } catch (e) { say('  (community upload failed: ' + e.message + ')'); } } },
   async log(c) { say('  ' + c.args.join(' ')); },
 };
 
@@ -323,6 +345,20 @@ export function scriptFromCurrent() {
 
 // ---------------------------------------------------------------- built-in examples
 export const EXAMPLES = [
+  { name: 'Jupiter at f/20 (sandbox)', text: `# Jupiter with an 8-inch SCT, 2x Barlow and a planetary camera: lucky imaging.
+# Mauna Kea's steady air; Jupiter is high before dawn in Oct 2026.
+site maunakea
+gear mount=eq6 optic=sct_8 corrector=barlow2 camera=planet_462
+accessories autofocus adc dew power
+connect
+target Jupiter
+wait altitude 45
+center
+focus auto
+video exp=8ms gain=320 frames=3000 roi=640
+lucky keep=10%
+process title="Jupiter from Mauna Kea" sat=0.5
+publish` },
   { name: 'Orion’s Sword — M42 to the Horsehead (sandbox)', text: `# Orion's Sword: M42, the Running Man, the Flame and the Horsehead in one frame.
 # Best: Atacama, 9 Dec 2026 (new moon, Orion 72° up at 1:54 am). Needs the sandbox gear.
 date 2026-12-09

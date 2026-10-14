@@ -94,7 +94,7 @@ export const TARGETS = [
   ['Cassiopeia', 'Cassiopeia W', 'star', 14.0, 60.5, 900, 2.5, 'The W asterism in the Milky Way. 35–50mm.'],
 ];
 
-export const TYPE_LABEL = { galaxy: 'Galaxy', nebula: 'Nebula', cluster: 'Star cluster', planetary: 'Planetary nebula', snr: 'Supernova remnant', dark: 'Dark nebula', milkyway: 'Milky Way field', star: 'Star field', oc: 'Open cluster', gc: 'Globular cluster', en: 'Emission nebula', rn: 'Reflection nebula', pn: 'Planetary nebula', bn: 'Nebula', sg: 'Spiral galaxy', eg: 'Elliptical galaxy', ig: 'Irregular galaxy', lg: 'Galaxy', dn: 'Dark nebula', sn: 'Supernova remnant', 'g': 'Galaxy', gg: 'Galaxy group', s0: 'Lenticular galaxy', 'pos': 'Position' };
+export const TYPE_LABEL = { planet: 'Planet', moon: 'Moon', galaxy: 'Galaxy', nebula: 'Nebula', cluster: 'Star cluster', planetary: 'Planetary nebula', snr: 'Supernova remnant', dark: 'Dark nebula', milkyway: 'Milky Way field', star: 'Star field', oc: 'Open cluster', gc: 'Globular cluster', en: 'Emission nebula', rn: 'Reflection nebula', pn: 'Planetary nebula', bn: 'Nebula', sg: 'Spiral galaxy', eg: 'Elliptical galaxy', ig: 'Irregular galaxy', lg: 'Galaxy', dn: 'Dark nebula', sn: 'Supernova remnant', 'g': 'Galaxy', gg: 'Galaxy group', s0: 'Lenticular galaxy', 'pos': 'Position' };
 
 export const cat = {
   stars: [], lines: [], mw: [], dsos: [], names: {}, constNames: [], loaded: false,
@@ -142,12 +142,23 @@ export async function loadCatalogs(progress) {
   cat.loaded = true;
 }
 
+// Solar-system bodies move, so they are resolved at the game's current time.
+let bodyLookup = null;
+export function setBodyLookup(fn) { bodyLookup = fn; }
+export const BODY_NAMES = ['Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune'];
+const BODY_DESC = { Moon: 'Our Moon. Craters, maria and mountains — best along the terminator, away from full Moon.', Mercury: 'Elusive innermost planet, always low in twilight.', Venus: 'Brilliant, cloud-covered; shows phases like the Moon.', Mars: 'The Red Planet: polar caps and dark albedo markings. Small — needs long focal length and good seeing.', Jupiter: 'Gas giant with cloud belts, the Great Red Spot and four bright moons. Rotates in under 10 hours.', Saturn: 'The ringed planet. In 2025–26 the rings are nearly edge-on.', Uranus: 'Tiny pale-cyan disk (~3.7″).', Neptune: 'Distant blue dot (~2.3″).' };
+export function bodyTarget(name) {
+  if (!bodyLookup) return null;
+  const b = bodyLookup(name); if (!b) return null;
+  return { id: name, name, type: name === 'Moon' ? 'moon' : 'planet', ra: b.ra, dec: b.dec, size: b.diam / 60, mag: b.mag, body: name, desc: `${BODY_DESC[name]} Now ${b.diam > 120 ? (b.diam / 60).toFixed(1) + '′' : b.diam.toFixed(1) + '″'} across, mag ${b.mag.toFixed(1)}, ${Math.round(b.illum * 100)}% lit.`, kind: 'body' };
+}
 export function findLocal(q) {
   const s = q.trim().toLowerCase().replace(/\s+/g, ' ');
   if (!s) return [];
   const norm = (x) => x.toLowerCase().replace(/\s+/g, '');
   const sn = norm(s);
   const res = [];
+  for (const nm of BODY_NAMES) if (nm.toLowerCase().startsWith(s) || (s.length > 2 && nm.toLowerCase().includes(s))) { const t = bodyTarget(nm); if (t) res.push({ ...t, score: nm.toLowerCase() === s ? -1 : 0.8 }); }
   for (const d of cat.dsos) {
     const score = norm(d.id) === sn ? 0 : norm(d.name) === sn ? 0.5 : norm(d.id).startsWith(sn) ? 1 : d.name.toLowerCase().includes(s) ? 2 : -1;
     if (score >= 0) res.push({ ...d, score, kind: 'dso' });

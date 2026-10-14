@@ -4,6 +4,8 @@
 import * as A from './astro.js';
 import { mulberry32, gaussFactory, makeNoise, hashStr, smoothstep } from './util.js';
 import { horizonAlt } from './gear.js';
+import { drawBodies, luckySeeing } from './bodies.js';
+import { auroraAt } from './aurora.js';
 
 const HIPS_DSS = 'CDS/P/DSS2/color', HIPS_MEL = 'CDS/P/Mellinger/color';
 const K_OBJ = 0.251;      // photons/s/cm²/arcsec² per band at survey flux F=1 (≈16.5 mag/arcsec²)
@@ -27,7 +29,7 @@ async function fetchSurvey(ra, dec, fovDeg, N) {
     let img;
     try {
       // Never wait forever on the survey server: time out and fall back to catalog stars.
-      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 30000);
+      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 60000);
       let r;
       try { r = await fetch(url, { signal: ctl.signal }); } finally { clearTimeout(to); }
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -45,7 +47,7 @@ async function fetchSurvey(ra, dec, fovDeg, N) {
     return entry;
   })();
   skyCache.push(entry);
-  while (skyCache.length > 6) skyCache.shift();
+  while (skyCache.length > 4) skyCache.shift();
   return entry.ready;
 }
 
@@ -109,7 +111,7 @@ function syntheticSky(ra0, dec0, fov, N) {
 
 function findSky(ra, dec, scale, needFovDeg) {
   for (const e of skyCache) {
-    if (Math.abs(e.scale / scale - 1) > 0.08 && !(e.scale > scale && e.N >= 2400 && Math.abs(e.scale / scale - 1) < 0.5)) continue;
+    if (Math.abs(e.scale / scale - 1) > 0.08 && !(e.scale > scale && e.N >= 2900 && Math.abs(e.scale / scale - 1) < 0.5)) continue;
     const d = A.sep(ra, dec, e.ra, e.dec);
     if (d + needFovDeg / 2 <= e.fov / 2 * 0.98) return e.ready;
   }
@@ -121,7 +123,7 @@ async function getSky(ra, dec, scale, needFovDeg) {
   if (hit) return hit;
   const fov = Math.min(150, needFovDeg * 1.25);
   let N = Math.ceil((fov * 3600) / scale);
-  N = Math.min(N, 2400); N = Math.max(N, 64);
+  N = Math.min(N, 3000); N = Math.max(N, 64);
   return fetchSurvey(ra, dec, fov, N);
 }
 
@@ -132,7 +134,7 @@ function geometry(r) {
   let W, H, k, offX = 0, offY = 0;
   if (r.roi) { W = r.roi.w; H = r.roi.h; k = 1; offX = r.roi.cx - Ws / 2; offY = r.roi.cy - Hs / 2; }
   else {
-    const Q = r.quality || 1024;
+    const Q = r.quality || 2048;
     if (Ws >= Hs) { W = Math.min(Q, Ws); k = Ws / W; H = Math.round(Hs / k); }
     else { H = Math.min(Q, Hs); k = Hs / H; W = Math.round(Ws / k); }
   }
@@ -258,6 +260,7 @@ async function renderFrame(r, opts = {}) {
   const mid = pathAt(r.path, 0.5);
   const lstMid = A.lst(r.t0 + t * 500, r.env.lon);
 
+  const TM = { t0: performance.now() }; const mark = (k) => { TM[k] = Math.round(performance.now() - TM.t0); };
   // --- object light from survey ---
   if (!isDarkish && !usePanel) {
     // frame extent incl. path for coverage
@@ -327,6 +330,7 @@ async function renderFrame(r, opts = {}) {
     }
   }
 
+  mark('survey');
   // --- environment grid: altitude/azimuth per pixel (coarse) ---
   const GX = 17, GY = 12;
   const altG = new Float32Array(GX * GY), azG = new Float32Array(GX * GY);
@@ -428,12 +432,65 @@ async function renderFrame(r, opts = {}) {
     R = Gc = Bc = null;
   }
 
+  mark('objE');
+  // --- aurora: green 557.7 nm curtains with red 630 nm tops (structured, so it's added like an object) ---
+  if (!isDarkish && !usePanel && objE[0] && env.aurora && env.aurora.strength > 0) {
+    const tMid = r.t0 + t * 500, au = [0, 0];
+    const k0 = area * pixArea * throughput * t;
+    const toE = (nl) => PHI0 * Math.pow(10, -0.4 * A.nlToMag(Math.max(nl, 1e-4))) * k0;
+    for (let y = 0; y < H; y += 1) for (let x = 0; x < W; x += 1) {
+      const alt = sampleGrid(altG, x, y); if (alt < -1) continue;
+      auroraAt(env.aurora, alt, sampleAz(x, y), tMid, au); if (au[0] + au[1] < 0.5) continue;
+      const X = A.airmass(Math.max(alt, 0.5)), tr = env.transp * Math.pow(10, -0.4 * 0.15 * X);
+      const gE = toE(au[0]) * tr, rE = toE(au[1]) * tr, i = y * W + x;
+      if (mono) { const f = r.filter; objE[0][i] += ((f ? f.cont[1] : 1) * gE + (f ? f.cont[0] : 1) * rE) * cam.qe; }
+      else { objE[0][i] += (rE + gE * 0.08) * qeBand[0]; objE[1][i] += gE * qeBand[1]; objE[2][i] += gE * 0.12 * qeBand[2]; }
+    }
+  }
+
+  mark('aurora');
+  // --- planets, the Moon, Galilean moons (true positions, phases, surfaces) ---
+  if (!isDarkish && !usePanel && r.bodies && r.bodies.length && objE[0]) {
+    const yOff = g.offY / (r.roi ? 1 : k);
+    const rotOf = (p) => (r.rot + p[2]) * A.D2R;
+    const toPix = (ra, dec, p) => {
+      const ctr = A.offsetPA(r.ra, r.dec, Math.hypot(p[0], p[1]) / 3600, Math.atan2(p[0], p[1]) * A.R2D);
+      const th = rotOf(p), cs = Math.cos(th), sn = Math.sin(th);
+      const pr = A.tanProject(ctr.ra, ctr.dec, ra, dec);
+      const bx = -pr.xi * A.R2D * 3600 / scale, by = -pr.eta * A.R2D * 3600 / scale;
+      return [cs * bx - sn * by + W / 2 - g.offX, sn * bx + cs * by + H / 2 - yOff];
+    };
+    const thm = rotOf(mid), csm = Math.cos(thm), snm = Math.sin(thm);
+    const pixToEN = (dx, dy) => [-(csm * dx + snm * dy) * scale, -(-snm * dx + csm * dy) * scale];
+    const zenDir = (ra, dec) => {
+      const pa = A.posAngle(ra, dec, lstMid, r.env.lat) * A.D2R, e = Math.sin(pa), n = Math.cos(pa);
+      const u = csm * -e - snm * -n, v = snm * -e + csm * -n, l = Math.hypot(u, v) || 1; return [u / l, v / l];
+    };
+    const cloudsOn = env.clouds > 0.02, nzc = cloudsOn ? makeNoise(env.cloudSeed) : null, twc = env.windDir * A.D2R;
+    const transAt = (x, y) => {
+      let tr = env.transp; const alt = sampleGrid(altG, x, y);
+      if (cloudsOn && alt > 0) {
+        const az = sampleAz(x, y) * A.D2R, ct = 1 / Math.tan(Math.max(alt, 4) * A.D2R);
+        const px = ct * Math.sin(az) * 1.6 + Math.cos(twc) * env.cloudDrift, py = ct * Math.cos(az) * 1.6 + Math.sin(twc) * env.cloudDrift;
+        tr *= 1 - 0.985 * smoothstep(1 - env.clouds - 0.12, 1 - env.clouds + 0.18, nzc.fbm(px, py, 5));
+      }
+      return tr;
+    };
+    out.bodies = drawBodies(objE, r.bodies, {
+      W, H, nc, mono, scale, flt: r.filter, qeBand, qe: cam.qe, photons: area * throughput * t / (r.roi ? 1 : k * k), toPix, pixToEN, zenDir, pathAt: (f) => pathAt(r.path, f),
+      altAt: (x, y) => sampleGrid(altG, x, y), transAt, extAt: (c, alt) => Math.pow(10, -0.4 * ext[c] * A.airmass(Math.max(alt, 0.5))), adc: r.adc,
+    });
+  }
+
+  mark('bodies');
   // --- PSF ---
   const tmp = new Float32Array(N);
   if (R === null && out._stars) {
-    const fwhmSeeing = env.seeing * Math.pow(A.airmass(Math.max(sampleGrid(altG, W / 2, H / 2), 5)), 0.6);
+    let fwhmSeeing = env.seeing * Math.pow(A.airmass(Math.max(sampleGrid(altG, W / 2, H / 2), 5)), 0.6);
+    if (r.lucky) fwhmSeeing = luckySeeing(fwhmSeeing, opt.D, r.lucky.kept / r.lucky.total);
+    else if (t < 0.5) fwhmSeeing *= Math.exp(0.32 * gauss()) * 0.82; // short exposures freeze the seeing: frames "boil"
     const fwhmDiff = 116 / opt.D * 1.0;
-    const fwhmGuide = 2.355 * (r.jitter || 0);
+    const fwhmGuide = r.lucky ? r.lucky.smear || 0 : 2.355 * (r.jitter || 0);
     const pixUm = g.pixEff * (r.roi ? 1 : k);
     const fwhmAb = (opt.ab || 0) / pixUm * scale;
     const baseFWHM = 3.2; // survey's own PSF (arcsec) — subtract in quadrature
@@ -466,10 +523,13 @@ async function renderFrame(r, opts = {}) {
       const bright = out._stars.slice(0, r.bahtinov ? 6 : 40);
       for (const st of bright) {
         const fe = st.f * P * cam.qe;
-        if (fe < 400 && !r.bahtinov) continue;
-        const L = Math.min(W / 3, (r.bahtinov ? 14 : 3) * Math.sqrt(fe) / Math.sqrt(scale) / 6 + 6);
+        if (fe < (r.bahtinov ? 400 : 3000)) continue;
+        // Real spikes hold ~1% of the star's light (vanes) or less (aperture blades), and fade along their length.
+        const L = r.bahtinov ? Math.min(W / 3, 14 * Math.sqrt(fe) / Math.sqrt(scale) / 6 + 6) : Math.min(W / 16, 0.45 * Math.pow(fe, 0.33) * (opt.spikes ? 1 : 0.6));
+        if (L < 3) continue;
         const rotA = (r.rot + mid[2]) * A.D2R;
-        const amp = fe / L * (r.bahtinov ? 0.06 : 0.015);
+        const frac = r.bahtinov ? 0.06 : opt.spikes ? 0.012 : 0.005;
+        const amp = r.bahtinov ? fe / L * 0.06 : fe * frac / (spikes * L);
         for (let c = 0; c < nc; c++) {
           const a = objE[c];
           if (r.bahtinov) {
@@ -483,7 +543,8 @@ async function renderFrame(r, opts = {}) {
           } else {
             for (let q = 0; q < spikes; q++) {
               const th = rotA * (opt.spikes ? 0 : 1) + (q / spikes) * Math.PI * 2 + (opt.spikes ? 0 : 0.3);
-              drawLine(a, W, H, st.x, st.y, st.x + Math.cos(th) * L, st.y + Math.sin(th) * L, amp, 1);
+              const dx = Math.cos(th), dy = Math.sin(th);
+              for (let k = 0; k < 4; k++) drawLine(a, W, H, st.x + dx * L * k / 4, st.y + dy * L * k / 4, st.x + dx * L * (k + 1) / 4, st.y + dy * L * (k + 1) / 4, amp * (1.75 - k * 0.5), 1);
             }
           }
         }
@@ -492,6 +553,7 @@ async function renderFrame(r, opts = {}) {
     delete out._stars;
   }
 
+  mark('psf');
   // --- vignetting & dust (the flat field), fixed to the sensor ---
   const flatField = makeFlatField(r, W, H, g);
 
@@ -511,6 +573,7 @@ async function renderFrame(r, opts = {}) {
     }
   }
 
+  mark('flat+sats');
   // --- sensor ---
   const sens = r.sensor; // {gainE, rn, maxADU, fwEff, offsetADU}
   const temp = r.sensorTemp ?? 20;
@@ -525,56 +588,67 @@ async function renderFrame(r, opts = {}) {
   const data = [];
   const bayerFrac = mono ? [1] : [0.25, 0.5, 0.25];
   const panelRate = usePanel ? (r.panelLevel || 1) * 9000 / ((opt.focal / opt.D) ** 2) : 0;
-  const quant = k < 1.5;
+  const quant = k < 1.5 && !r.lucky;
+  const nAvg = r.lucky ? Math.max(1, r.lucky.kept) : 1; // a lucky stack averages this many frames
+  // fast noise: a seeded table of normal deviates + xorshift indexing (millions of samples per frame)
+  const GT = new Float32Array(1 << 16); for (let i = 0; i < GT.length; i++) GT[i] = gauss();
+  let xs = (Math.floor(rand() * 4294967295) >>> 0) || 1;
+  const nextU = () => { xs ^= xs << 13; xs ^= xs >>> 17; xs ^= xs << 5; return (xs >>> 0) / 4294967296; };
+  const nextG = () => { xs ^= xs << 13; xs ^= xs >>> 17; xs ^= xs << 5; return GT[(xs >>> 0) & 65535]; };
+  // per-pixel dark signal (dark current + hot pixels + amp glow), shared by all channels
+  const darkMap = new Float32Array(N).fill(darkRate * t);
+  for (const [i, a] of hot) darkMap[i] += a * t;
+  if (ampGlow) { const tf = ampGlow * t * Math.pow(2, (temp - 25) / 8); for (let y = 0; y < H; y++) { const dy = Math.min(y, H - y) / H, ey = Math.exp(-dy * 22) * 0.3; for (let x = 0; x < W; x++) { const dx = Math.min(x, W - x) / W; darkMap[y * W + x] += tf * (Math.exp(-dx * 18) * 0.7 + ey) * Math.exp(-Math.min(dx, dy) * 10); } } }
+  // bilinear grid lookup tables
+  const gxI = new Int32Array(W), gxU = new Float32Array(W);
+  for (let x = 0; x < W; x++) { const gx = (x / (W - 1)) * (GX - 1); gxI[x] = Math.min(GX - 2, Math.floor(gx)); gxU[x] = gx - gxI[x]; }
+  const groundDim = (loc.bortle >= 5 ? 0.25 : 0.06) * (1 + (env.moonAlt > 0 ? env.moonIllum * 6 : 0));
   for (let c = 0; c < nc; c++) {
     const arr = new Float32Array(N);
-    const m = Math.max(1, (r.roi ? 1 : k * k) * bayerFrac[c]);
+    const m = Math.max(1, (r.roi ? 1 : k * k) * bayerFrac[c]) * nAvg;
     const qe = mono ? cam.qe : qeBand[c];
-    const flt2 = flt;
+    const sqm = Math.sqrt(m), rnS = sens.rn / sqm, invG = 1 / sens.gainE, fw = sens.fwEff, maxA = sens.maxADU;
+    // sky electrons per pixel on the coarse grid for this channel
+    const skyC = new Float32Array(GX * GY);
+    const kSky = area * pixArea * throughput * t * qe;
+    for (let q = 0; q < GX * GY; q++) skyC[q] = (mono ? flt.skyCont[0] * skyGrid[0][q] + flt.skyCont[1] * skyGrid[1][q] + flt.skyCont[2] * skyGrid[2][q] : flt.skyCont[c] * skyGrid[c][q]) * kSky;
+    const panelE = usePanel ? panelRate * qe * t * (mono ? 1 : [0.9, 1, 1.1][c]) : 0;
+    const obj = objE[c];
     for (let y = 0; y < H; y++) {
-      const row = y * W;
+      const row = y * W, gy = (y / (H - 1)) * (GY - 1), jj = Math.min(GY - 2, Math.floor(gy)), v = gy - jj, rowO = pedestal + rowOff[y];
       for (let x = 0; x < W; x++) {
         const i = row + x;
-        const ff = flatField[i];
         let e = 0;
         if (!isDarkish) {
-          if (usePanel) e = panelRate * qe * t * (mono ? 1 : [0.9, 1, 1.1][c]);
+          if (usePanel) e = panelE * flatField[i];
           else {
-            const gx = (x / (W - 1)) * (GX - 1), gy = (y / (H - 1)) * (GY - 1);
-            const ii = Math.min(GX - 2, Math.floor(gx)), jj = Math.min(GY - 2, Math.floor(gy)), u = gx - ii, v = gy - jj;
-            const q00 = jj * GX + ii;
-            const ground = groundGrid[q00] * (1 - u) * (1 - v) + groundGrid[q00 + 1] * u * (1 - v) + groundGrid[q00 + GX] * (1 - u) * v + groundGrid[q00 + GX + 1] * u * v;
-            let skyE;
-            const sk = (b) => skyGrid[b][q00] * (1 - u) * (1 - v) + skyGrid[b][q00 + 1] * u * (1 - v) + skyGrid[b][q00 + GX] * (1 - u) * v + skyGrid[b][q00 + GX + 1] * u * v;
-            if (mono) skyE = flt2.skyCont[0] * sk(0) + flt2.skyCont[1] * sk(1) + flt2.skyCont[2] * sk(2);
-            else skyE = flt2.skyCont[c] * sk(c) * (c === 0 && broadband ? 1 : 1);
-            skyE *= area * pixArea * throughput * t * qe;
-            let objv = objE[c][i];
-            if (ground > 0.5) { objv = 0; skyE *= (loc.bortle >= 5 ? 0.25 : 0.06) * (1 + (env.moonAlt > 0 ? env.moonIllum * 6 : 0)); }
-            e = (objv + skyE) * ff;
+            const ii = gxI[x], u = gxU[x], q00 = jj * GX + ii;
+            const w00 = (1 - u) * (1 - v), w10 = u * (1 - v), w01 = (1 - u) * v, w11 = u * v;
+            let skyE = skyC[q00] * w00 + skyC[q00 + 1] * w10 + skyC[q00 + GX] * w01 + skyC[q00 + GX + 1] * w11;
+            const ground = groundGrid[q00] * w00 + groundGrid[q00 + 1] * w10 + groundGrid[q00 + GX] * w01 + groundGrid[q00 + GX + 1] * w11;
+            let objv = obj ? obj[i] : 0;
+            if (ground > 0.5) { objv = 0; skyE *= groundDim; }
+            e = (objv + skyE) * flatField[i];
           }
         }
-        // dark current, hot pixels, amp glow
-        let d = darkRate * t;
-        const hp = hot.get(i); if (hp) d += hp * t;
-        if (ampGlow) { const dx = Math.min(x, W - x) / W, dy = Math.min(y, H - y) / H; d += ampGlow * t * (Math.exp(-dx * 18) * 0.7 + Math.exp(-dy * 22) * 0.3) * Math.exp(-(Math.min(dx, dy)) * 10) * Math.pow(2, (temp - 25) / 8); }
-        let mean = e + d;
-        if (mean > sens.fwEff) mean = sens.fwEff;
+        let mean = e + darkMap[i];
+        if (mean > fw) mean = fw;
         const ne = mean * m;
         let val;
         if (ne < 25) { // Poisson (Knuth)
-          const L = Math.exp(-ne); let kk = 0, p = 1; do { kk++; p *= rand(); } while (p > L); val = (kk - 1) / m;
-        } else val = mean + gauss() * Math.sqrt(mean / m);
-        val += gauss() * sens.rn / Math.sqrt(m);
-        let adu = val / sens.gainE + pedestal + colOff[x] + rowOff[y];
+          const L = Math.exp(-ne); let kk = 0, p = 1; do { kk++; p *= nextU(); } while (p > L); val = (kk - 1) / m;
+        } else val = mean + nextG() * Math.sqrt(mean / m);
+        val += nextG() * rnS;
+        let adu = val * invG + rowO + colOff[x];
         if (quant) adu = Math.round(adu);
-        arr[i] = adu < 0 ? 0 : adu > sens.maxADU ? sens.maxADU : adu;
+        arr[i] = adu < 0 ? 0 : adu > maxA ? maxA : adu;
       }
     }
     data.push(arr);
   }
   // moon in frame: saturate a disk
-  if (!isDarkish && r.type === 'light' && env.moonAlt > -1) moonDisk(r, data, W, H, scale, mid, sens.maxADU, lstMid);
+  if (!isDarkish && r.type === 'light' && env.moonAlt > -1 && !(r.bodies || []).some((b) => b.name === 'Moon')) moonDisk(r, data, W, H, scale, mid, sens.maxADU, lstMid);
+  mark('sensor'); out.timing = TM;
   out.data = data;
   out.pedestal = pedestal;
   out.maxADU = sens.maxADU;
@@ -729,6 +803,8 @@ function preview(fr, opts = {}) {
     for (const p of params) { p.black = b; p.mtf = m; }
   }
   if (opts.none) for (const p of params) { p.black = 0; p.mtf = 0.5; }
+  // planets & the Moon fill the frame with bright detail: show them linearly (like capture software does)
+  else if ((fr.bodies || []).some((b) => b.rPix > 12)) for (const p of params) { p.black = fr.pedestal + (p.black - fr.pedestal) * 0.5 + 0; p.max = fr.maxADU; p.mtf = 0.5; }
   const lut = (v, p) => { let x = (v - p.black) / (p.max - p.black); if (x <= 0) return 0; if (x >= 1) return 255; const m = p.mtf; return 255 * ((m - 1) * x) / ((2 * m - 1) * x - m); };
   for (let y = 0; y < outH; y++) for (let x = 0; x < outW; x++) {
     const si = Math.min(H - 1, Math.floor(y * sc)) * W + Math.min(W - 1, Math.floor(x * sc));
@@ -810,7 +886,29 @@ async function buildMaster(recipes, kind, progress, label) {
   return { W, H, nc, data: acc };
 }
 
+// Lucky imaging (AutoStakkert-style): grade every frame of a planetary video, keep the best,
+// align on the planet and average. Rendered directly from the video recipe with the lucky statistics.
+async function luckyStack(job, progress) {
+  const v = job.video;
+  const kept = Math.max(1, Math.round(v.frames * job.keep));
+  progress(`Analysing ${v.frames} frames…`, 0.1);
+  await new Promise((r) => setTimeout(r, 30));
+  progress(`Stacking the best ${kept} frames (${Math.round(job.keep * 100)}%)…`, 0.5);
+  // planet rotation during the capture smears detail (no derotation): ~half the limb motion over the video
+  const PER = { Jupiter: 9.925, Saturn: 10.56, Mars: 24.62 };
+  const dur = v.frames / Math.max(1, v.fps || 30);
+  let smear = 0; for (const b of v.bodies || []) if (PER[b.name]) smear = Math.max(smear, 0.5 * (2 * Math.PI * dur / (PER[b.name] * 3600)) * b.diam / 2);
+  const rec = { ...v, id: null, seed: (v.seed ^ 0x5bd1e995) >>> 0, lucky: { total: v.frames, kept, smear }, path: [[0, 0, 0], [0, 0, 0]] };
+  const fr = await renderFrame(rec, {});
+  const W = fr.W, H = fr.H, nc = fr.nc;
+  const data = fr.data.map((a) => { const o = new Float32Array(a.length); for (let i = 0; i < a.length; i++) o[i] = Math.max(0, (a[i] - fr.pedestal) / fr.maxADU); return o; });
+  progress('Done', 1);
+  const cov = new Float32Array(W * H).fill(1);
+  return { W, H, nc, data, coverage: cov, refPointing: { ra: v.ra, dec: v.dec, rot: v.rot }, scale: fr.scale, bodies: fr.bodies || [], smear, duration: dur };
+}
+
 async function stack(job, progress) {
+  if (job.video) return luckyStack(job, progress);
   const { lights, darks, flats, biases, flatDarks, method, normalize = true, drizzle } = job;
   // With few frames a single outlier can never exceed κσ (max z = (n-1)/√n), so tighten κ for small stacks.
   const n0 = lights.length; const kappa = Math.min(job.kappa || 2.5, n0 < 12 ? Math.max(1.2, ((n0 - 1) / Math.sqrt(n0)) * 0.85) : 99);
@@ -954,7 +1052,9 @@ self.onmessage = async (e) => {
       const pv = preview(fr, { linked: args.linked });
       const thumb = args.thumb ? preview(fr, { maxW: 240, linked: args.linked }) : null;
       const hist = histogram(fr);
-      const res = { W: fr.W, H: fr.H, nc: fr.nc, stats, preview: pv, thumb, hist, maxADU: fr.maxADU, trailPx: fr.trailPx || 0, warnings: fr.warnings, scale: fr.scale };
+      let peakFrac = 0; for (const a of fr.data) for (let i = 0; i < a.length; i++) if (a[i] > peakFrac) peakFrac = a[i];
+      peakFrac = (peakFrac - fr.pedestal) / Math.max(1, fr.maxADU - fr.pedestal);
+      const res = { W: fr.W, H: fr.H, nc: fr.nc, stats, preview: pv, thumb, hist, maxADU: fr.maxADU, trailPx: fr.trailPx || 0, warnings: fr.warnings, scale: fr.scale, bodies: fr.bodies || [], peakFrac, timing: fr.timing };
       const tr = [pv.rgba.buffer]; if (thumb) tr.push(thumb.rgba.buffer);
       if (args.wantData) { res.data = fr.data.map((a) => a.slice()); tr.push(...res.data.map((a) => a.buffer)); }
       post(res, tr);

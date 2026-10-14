@@ -75,7 +75,7 @@ export function newGame(gameMode = 'career') {
     mail: [],
     quests: {},
     stats: { nights: 0, frames: 0, integration: 0, uploads: 0 },
-    settings: { nightMode: false, quality: 1024, linked: false, sound: true },
+    settings: { nightMode: false, quality: 2048, linked: false, sound: true },
     night: null,
     tutorialDone: false,
   };

@@ -7,8 +7,10 @@ import { money } from './gear.js';
 import { MP, hasLan, LAN_PORT } from './mp.js';
 
 export const PREFS = loadPrefs();
-function loadPrefs() { try { return { quality: 1024, nightMode: false, sens: 1, hudScale: 1, name: '', ...JSON.parse(localStorage.getItem('fl-prefs') || '{}') }; } catch { return { quality: 1024, nightMode: false, sens: 1, hudScale: 1, name: '' }; } }
-export function savePrefs() { try { localStorage.setItem('fl-prefs', JSON.stringify(PREFS)); } catch { /* ignore */ } applyPrefs(); }
+// v0.2 renders at 2048 px by default; lift saves still on the old 1024 default once
+if (!PREFS.resV2) { if ((PREFS.quality || 0) < 2048) PREFS.quality = 2048; PREFS.resV2 = true; try { localStorage.setItem('fl-prefs', JSON.stringify(PREFS)); } catch { /* ignore */ } }
+function loadPrefs() { try { return { quality: 2048, nightMode: false, sens: 1, hudScale: 1, name: '', volMaster: 0.8, volAmb: 0.7, volSfx: 0.8, ...JSON.parse(localStorage.getItem('fl-prefs') || '{}') }; } catch { return { quality: 2048, nightMode: false, sens: 1, hudScale: 1, name: '' }; } }
+export function savePrefs() { try { localStorage.setItem('fl-prefs', JSON.stringify(PREFS)); } catch { /* ignore */ } applyPrefs(); window.dispatchEvent(new Event('fl-prefs')); }
 export function applyPrefs() { document.documentElement.style.setProperty('--hud-scale', PREFS.hudScale); }
 
 export function quitApp() {
@@ -126,13 +128,16 @@ export function settingsPanel(onChange) {
     const val = h('span', { class: 'slider-value' }, fmt(PREFS[key]));
     return h('div', { class: 'setting' }, h('span', { class: 'setting-label' }, label), h('div', { class: 'slider' }, h('input', { type: 'range', min, max, step, value: PREFS[key], oninput: (e) => { PREFS[key] = +e.target.value; val.textContent = fmt(PREFS[key]); savePrefs(); onChange && onChange(); } }), val));
   };
-  const sel = h('select', { onchange: (e) => { PREFS.quality = +e.target.value; savePrefs(); if (G.s) G.s.settings.quality = PREFS.quality; } }, ...[[768, '768 px (fast)'], [1024, '1024 px'], [1400, '1400 px (detailed)']].map(([v, l]) => { const o = h('option', { value: v }, l); if (v === PREFS.quality) o.selected = true; return o; }));
+  const sel = h('select', { onchange: (e) => { PREFS.quality = +e.target.value; savePrefs(); if (G.s) G.s.settings.quality = PREFS.quality; } }, ...[[1024, '1024 px (fast)'], [1600, '1600 px'], [2048, '2048 px (default)'], [3072, '3072 px (ultra, slower)'], [4096, '4096 px (extreme: slow, needs lots of RAM)']].map(([v, l]) => { const o = h('option', { value: v }, l); if (v === PREFS.quality) o.selected = true; return o; }));
   const red = h('input', { type: 'checkbox', checked: PREFS.nightMode, onchange: (e) => { PREFS.nightMode = e.target.checked; savePrefs(); document.body.classList.toggle('nightmode', PREFS.nightMode); if (G.s) G.s.settings.nightMode = PREFS.nightMode; } });
   return panel('Settings',
     h('div', { class: 'setting' }, h('span', { class: 'setting-label' }, 'Simulation resolution'), sel, h('span', { class: 'setting-hint' }, 'Long side of every simulated frame. Higher = more detail, slower.')),
     h('div', { class: 'setting' }, h('span', { class: 'setting-label' }, 'Red night-vision mode'), h('label', {}, red)),
     sl('Mouse sensitivity', 'sens', 0.3, 2.5, 0.05, (v) => v.toFixed(2) + '×'),
     sl('HUD scale', 'hudScale', 0.8, 1.4, 0.05, (v) => Math.round(v * 100) + '%'),
+    sl('Master volume', 'volMaster', 0, 1, 0.05, (v) => Math.round(v * 100) + '%'),
+    sl('Ambience (wind, crickets, traffic)', 'volAmb', 0, 1, 0.05, (v) => Math.round(v * 100) + '%'),
+    sl('Effects (shutter, motors, UI)', 'volSfx', 0, 1, 0.05, (v) => Math.round(v * 100) + '%'),
     h('table', { class: 'keys' }, ...[['Click / drag', 'Look around (Esc frees the mouse)'], ['W A S D', 'Walk (Shift to hurry)'], ['E', 'Interact'], ['R', 'Rig controls'], ['F', 'Red headlamp'], [', .', 'Time warp down / up'], ['Tab', 'Laptop ↔ outside'], ['Enter', 'Chat (multiplayer)'], ['F2', 'Hide HUD'], ['Esc', 'Pause menu']].map(([k, v]) => h('tr', {}, h('td', { class: 'key' }, k), h('td', {}, v)))));
 }
 function creditsPanel() {

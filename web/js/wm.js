@@ -24,6 +24,7 @@ let desktopEl, dockEl;
 export function registerApp(id, def) { apps[id] = { id, ...def }; }
 export function appDefs() { return apps; }
 export function isOpen(id) { return !!wins[id]; }
+export { closeApp as closeWindow };
 export function getWin(id) { return wins[id]; }
 
 export function initWM(desktop, dock) {
@@ -44,6 +45,7 @@ export function renderDock() {
 
 export function openApp(id, arg) {
   const a = apps[id]; if (!a) return;
+  if (!wins[id]) window.dispatchEvent(new CustomEvent('fl-sfx', { detail: { name: 'open' } }));
   if (wins[id]) { const w = wins[id]; w.el.style.display = ''; focus(w); w.minimized = false; if (w.api && w.api.onArg && arg !== undefined) w.api.onArg(arg); renderDock(); return w; }
   const W = Math.min(a.width || 800, desktopEl.clientWidth - 20), H = Math.min(a.height || 560, desktopEl.clientHeight - 20);
   const n = Object.keys(wins).length;
@@ -78,22 +80,63 @@ export function closeApp(id) {
 function minimize(id) { const w = wins[id]; if (!w) return; w.el.style.display = 'none'; w.minimized = true; renderDock(); }
 function toggleMax(id) {
   const w = wins[id]; if (!w) return;
+  w.el.classList.add('snapping');
   if (w.prev) { Object.assign(w.el.style, w.prev); w.prev = null; }
   else { w.prev = { left: w.el.style.left, top: w.el.style.top, width: w.el.style.width, height: w.el.style.height }; Object.assign(w.el.style, { left: '0px', top: '0px', width: desktopEl.clientWidth + 'px', height: desktopEl.clientHeight + 'px' }); }
-  w.api && w.api.onResize && w.api.onResize();
+  setTimeout(() => { w.el.classList.remove('snapping'); w.api && w.api.onResize && w.api.onResize(); }, 220);
 }
 function focus(w) {
   w.el.style.zIndex = ++zTop;
   for (const o of Object.values(wins)) o.el.classList.toggle('focused', o === w);
   document.dispatchEvent(new CustomEvent('appfocus', { detail: w.id }));
 }
+// Drag windows by the title bar. Like macOS: drag to the top edge to fill the screen, to the left/right edge
+// to tile into that half; dragging a tiled window restores its previous size.
+let snapGhost = null;
+function snapZone(x, y) {
+  const r = desktopEl.getBoundingClientRect();
+  if (y - r.top < 6) return 'max';
+  if (x - r.left < 8) return 'left';
+  if (r.right - x < 8) return 'right';
+  return null;
+}
+function zoneRect(z) {
+  const W = desktopEl.clientWidth, H = desktopEl.clientHeight, g = 6;
+  if (z === 'max') return { left: 0, top: 0, width: W, height: H };
+  if (z === 'left') return { left: g, top: g, width: W / 2 - g * 1.5, height: H - 2 * g };
+  return { left: W / 2 + g / 2, top: g, width: W / 2 - g * 1.5, height: H - 2 * g };
+}
 function dragify(handle, el, w) {
   handle.addEventListener('pointerdown', (e) => {
-    if (e.target.classList.contains('wb')) return;
-    const sx = e.clientX, sy = e.clientY, ox = el.offsetLeft, oy = el.offsetTop;
+    if (e.target.classList.contains('wb') || e.button !== 0) return;
+    let sx = e.clientX, sy = e.clientY, ox = el.offsetLeft, oy = el.offsetTop, zone = null, moved = false;
     handle.setPointerCapture(e.pointerId);
-    const mv = (ev) => { el.style.left = Math.max(-el.offsetWidth + 80, Math.min(desktopEl.clientWidth - 80, ox + ev.clientX - sx)) + 'px'; el.style.top = Math.max(0, Math.min(desktopEl.clientHeight - 30, oy + ev.clientY - sy)) + 'px'; };
-    const up = () => { handle.removeEventListener('pointermove', mv); handle.removeEventListener('pointerup', up); };
+    const mv = (ev) => {
+      if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 3) return;
+      if (!moved && w.prev) { // un-tile: restore size, keep the grab point under the cursor
+        const f = (ev.clientX - el.getBoundingClientRect().left) / el.offsetWidth;
+        Object.assign(el.style, { width: w.prev.width, height: w.prev.height }); w.prev = null; w.api && w.api.onResize && w.api.onResize();
+        ox = ev.clientX - desktopEl.getBoundingClientRect().left - f * el.offsetWidth; oy = 0; sx = ev.clientX; sy = ev.clientY;
+      }
+      moved = true; el.classList.add('dragging');
+      el.style.left = Math.max(-el.offsetWidth + 80, Math.min(desktopEl.clientWidth - 80, ox + ev.clientX - sx)) + 'px'; el.style.top = Math.max(0, Math.min(desktopEl.clientHeight - 30, oy + ev.clientY - sy)) + 'px';
+      const z = snapZone(ev.clientX, ev.clientY);
+      if (z !== zone) {
+        zone = z;
+        if (!snapGhost) { snapGhost = h('div', { class: 'snap-ghost' }); desktopEl.append(snapGhost); }
+        if (z) { const R = zoneRect(z); Object.assign(snapGhost.style, { left: R.left + 'px', top: R.top + 'px', width: R.width + 'px', height: R.height + 'px', zIndex: zTop - 1 }); snapGhost.classList.add('on'); }
+        else snapGhost.classList.remove('on');
+      }
+    };
+    const up = () => {
+      handle.removeEventListener('pointermove', mv); handle.removeEventListener('pointerup', up); el.classList.remove('dragging');
+      if (snapGhost) snapGhost.classList.remove('on');
+      if (zone) {
+        w.prev = w.prev || { left: el.style.left, top: el.style.top, width: el.style.width, height: el.style.height };
+        const R = zoneRect(zone); el.classList.add('snapping'); Object.assign(el.style, { left: R.left + 'px', top: R.top + 'px', width: R.width + 'px', height: R.height + 'px' });
+        setTimeout(() => { el.classList.remove('snapping'); w.api && w.api.onResize && w.api.onResize(); }, 220);
+      }
+    };
     handle.addEventListener('pointermove', mv); handle.addEventListener('pointerup', up);
   });
 }
@@ -110,9 +153,13 @@ function resizify(grip, el, w, a) {
 
 // ---------- toasts ----------
 let toastArea;
+export const NOTES = []; // notification history (for the Notification Center)
 export function toast(msg, kind = 'info', ms = 4500) {
+  NOTES.unshift({ msg: String(msg), kind, at: Date.now() }); if (NOTES.length > 60) NOTES.pop();
+  document.dispatchEvent(new CustomEvent('notes'));
   if (!toastArea) { toastArea = h('div', { class: 'toasts' }); document.body.append(toastArea); }
   const t = h('div', { class: 'toast ' + kind }, msg);
+  window.dispatchEvent(new CustomEvent('fl-sfx', { detail: { name: 'toast', kind } }));
   toastArea.append(t);
   setTimeout(() => t.classList.add('out'), ms);
   setTimeout(() => t.remove(), ms + 400);

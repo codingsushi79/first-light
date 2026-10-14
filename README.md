@@ -58,6 +58,32 @@ stack
 process preset=LRGB sat=0.7 title="Orion's Sword"
 ```
 
+## Planets, the Moon & lucky imaging
+Real positions for every planet (JPL elements), Jupiter's four big moons with their shadow transits,
+Saturn's rings at their true tilt, phases of Venus & Mercury, and a cratered Moon with real maria.
+Planets need focal length: an SCT + **Barlow** + a **planetary camera** (AstroMart). In AstroCap →
+**Planetary**, center the planet, watch it "boil" in Live view, then record a video (thousands of
+millisecond frames). DeepStack → *Planetary videos* keeps the sharpest frames (lucky imaging);
+PixelLab's **wavelets** bring the detail out. Low planets suffer atmospheric dispersion — use an ADC
+or *RGB align*.
+
+## Also new in 0.2
+- **Auroras** at high geomagnetic latitudes (nightly Kp index, storms), in the sky and in photos.
+- **Sound**: wind, crickets, distant traffic, owls, shutters, mount motors, footsteps.
+- **Logbook**: Messier checklist, planets, achievements (cash rewards in career), records.
+- **Storage**: every file has a realistic size (raw frames, SER videos, 32-bit stacks). The laptop's
+  SSD fills up — buy drives in AstroMart or free space in Files.
+- **Global StarShare**: published images also go to a shared online gallery where players like,
+  comment and buy prints (authors earn in-game money). Opt out in StarShare → My images.
+- Compass and sky markers outside; Spotlight (⌘K), Notification Center (click the clock) and
+  window snapping on the laptop; frames now render at 2048 px (Settings: up to 4096).
+
+## StarShare server
+`server/` is the global StarShare API (Vercel serverless function + Postgres). Deploy it with
+`vercel deploy --prod` from that folder after setting `DATABASE_URL` in the Vercel project; the
+schema is created automatically. The game talks to `https://first-light-starshare.vercel.app`
+(change `API` in `web/js/starshare-net.js` for your own deployment).
+
 ## Modes, saves and co-op
 - **Career**: start with an old DSLR and $300; earn money from images and challenges.
 - **Sandbox**: unlimited money, all gear unlocked, optional always-clear skies.
@@ -81,7 +107,7 @@ npm --prefix desktop run build:mac  # → desktop/src-tauri/target/release/bundl
 An internet connection is needed for sky imagery, catalogs and maps.
 
 ## Controls (outside)
-Click to look around · WASD walk · **E** interact (lens cap, grab & aim the rig, focus, polar bolts,
+Click to look around · WASD walk · compass & sky markers show the target and where the scope points · **E** interact (lens cap, grab & aim the rig, focus, polar bolts,
 sit at laptop) · **R** rig controls · **F** red headlamp · **Tab** laptop ↔ outside.
 
 ## Data credits

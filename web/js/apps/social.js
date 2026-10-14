@@ -1,14 +1,48 @@
 // StarShare (publishing & judging), AstroMart (shop), Mail (mentor & quests), Settings
 import { h, toast, openApp, confirmDlg, dialog, select } from '../wm.js';
 import { G, on, off, emit, save, addMoney, fmtDate, fmtDur, idbGet, idbDel, isSandbox } from '../state.js';
-import { GEAR, CAMERAS, OPTICS, MOUNTS, FILTERS, CORRECTORS, ACCESSORIES, LOC, money } from '../gear.js';
+import { GEAR, CAMERAS, OPTICS, MOUNTS, FILTERS, CORRECTORS, ACCESSORIES, STORAGE, LOC, money } from '../gear.js';
+import { usage, fmtBytes } from '../storage.js';
+import * as NET from '../starshare-net.js';
+import { PREFS, savePrefs } from '../menu.js';
 import { cat } from '../catalog.js';
 import * as S from '../session.js';
 import * as A from '../astro.js';
 import { mulberry32, hashStr } from '../util.js';
 
 // ============================== scoring ==============================
+// Planetary / lunar images are judged on resolved detail, exposure and processing — not on stars & background.
+function scorePlanet(out, work, meta, P) {
+  const { W, H } = work, n = W * H, px = out.rgba; const pl = meta.planet; const fb = [];
+  if (!pl) return { total: 8, feedback: ['There is no planet in this image!'], snr: 0, bg: 0, grad: 0, clip: 0, cast: 0, popularity: 0.3, targetKnown: false };
+  const L = new Float32Array(n); for (let i = 0; i < n; i++) L[i] = (0.3 * px[i * 4] + 0.59 * px[i * 4 + 1] + 0.11 * px[i * 4 + 2]) / 255;
+  const disk = []; let blown = 0, lap = 0, cnt = 0;
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) { const i = y * W + x; if (L[i] > 0.12) { disk.push(L[i]); if (L[i] > 0.985) blown++; lap += Math.abs(4 * L[i] - L[i - 1] - L[i + 1] - L[i - W] - L[i + W]); cnt++; } }
+  const blownF = cnt ? blown / cnt : 0, texture = cnt ? lap / cnt : 0;
+  // resolved detail: resolution elements across the disk
+  const elems = pl.diam / Math.max(0.15, pl.fwhm);
+  const detail = Math.max(0, Math.min(1, Math.log(Math.max(1, elems / 4)) / Math.log(90 / 4)));
+  let s = detail * 42;
+  if (elems > 60) fb.push('Stunning fine detail — the seeing was with you. 🔭'); else if (elems < 12) fb.push('Not much detail resolved — more focal length, steadier seeing or a bigger scope would help.');
+  // the planet's size in the frame
+  const rFrac = pl.rPix * 2 / Math.min(W, H); let sizeS = rFrac < 0.05 ? 0.3 : rFrac < 0.12 ? 0.7 : 1; if (rFrac < 0.06) fb.push('The planet is tiny in the frame — use a Barlow.'); s += sizeS * 10;
+  // exposure / processing
+  let expS = 1 - Math.min(1, blownF * 6); if (blownF > 0.04) fb.push('Highlights are blown out — lower the exposure or the white point.');
+  const med = disk.length ? disk.sort((a, b) => a - b)[disk.length >> 1] : 0; if (med < 0.25) { expS *= 0.6; fb.push('The planet looks dark — stretch more.'); }
+  s += expS * 14;
+  const sharpS = texture < 0.015 ? 0.4 : texture > 0.16 ? Math.max(0, 1 - (texture - 0.16) * 6) : 1;
+  if (texture < 0.015) fb.push('Looks soft — lucky stacks need wavelet sharpening.'); if (texture > 0.2) fb.push('Over-sharpened: noise and ringing artifacts.');
+  s += sharpS * 14;
+  const noiseS = Math.min(1, Math.log10(Math.max(1, pl.kept)) / 3); s += noiseS * 10; if (pl.kept < 60) fb.push('Very few frames stacked — the result is noisy.');
+  if (pl.alt < 30 && !pl.adc && !P.rgbAlign) { s -= 6; fb.push('Rainbow fringes from atmospheric dispersion (low altitude) — use RGB align or an ADC.'); }
+  if (pl.smear > 0.25) { s -= Math.min(10, pl.smear * 15); fb.push('Rotation smeared the features — keep videos shorter.'); }
+  if (meta.quality && meta.quality.defocus > 2) { s -= Math.min(15, (meta.quality.defocus - 2) * 3); fb.push('Out of focus.'); }
+  const pop = { Jupiter: 1.25, Saturn: 1.3, Mars: 1.15, Moon: 1.1, Venus: 0.8, Mercury: 0.9, Uranus: 0.7, Neptune: 0.7, Io: 0.5 }[pl.name] || 0.6;
+  return { total: Math.round(Math.max(0, Math.min(100, s + 10))), snr: +(noiseS * 100).toFixed(0), bg: 0, grad: 0, clip: +blownF.toFixed(3), cast: 0, feedback: fb, popularity: pop, targetKnown: true, planet: pl.name };
+}
+
 export function scoreImage(out, work, meta, P) {
+  if (meta.planetary) return scorePlanet(out, work, meta, P);
   const { W, H } = work; const n = W * H; const px = out.rgba;
   const L = new Float32Array(n), R = new Float32Array(n), Gc = new Float32Array(n), B = new Float32Array(n);
   for (let i = 0; i < n; i++) { R[i] = px[i * 4] / 255; Gc[i] = px[i * 4 + 1] / 255; B[i] = px[i * 4 + 2] / 255; L[i] = 0.3 * R[i] + 0.59 * Gc[i] + 0.11 * B[i]; }
@@ -116,9 +150,60 @@ export const shareApp = {
   icon: `<svg viewBox="0 0 40 40"><defs><linearGradient id="gss" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff5f8a"/><stop offset="1" stop-color="#7c2bd9"/></linearGradient></defs><rect width="40" height="40" rx="9" fill="url(#gss)"/><path d="M20 9l3.2 7 7.6.7-5.8 5 1.8 7.4L20 25l-6.8 4.1 1.8-7.4-5.8-5 7.6-.7z" fill="#fff"/></svg>`,
   open(body) {
     const root = h('div', { class: 'pad ss-root' }); body.append(root);
+    let view = 'community', sort = 'new', posts = [], loading = false, netErr = '';
+    const segBar = () => h('div', { class: 'seg' }, ...[['community', '🌍 Community'], ['mine', 'My images']].map(([k, l]) => h('button', { class: view === k ? 'on' : '', onclick: () => { view = k; render(); if (k === 'community') loadFeed(); } }, l)));
+    async function loadFeed(more = false) {
+      loading = true; netErr = ''; render();
+      try { const r = await NET.feed(sort, more && posts.length ? posts[posts.length - 1].created : null); posts = more ? [...posts, ...r.posts] : r.posts; }
+      catch (e) { netErr = /fetch|network/i.test(e.message) ? 'Can’t reach StarShare — are you online?' : e.message; }
+      loading = false; render();
+    }
+    function renderCommunity() {
+      const acc = NET.account();
+      root.append(h('div', { class: 'row wrap', style: { margin: '6px 0 12px' } },
+        h('div', { class: 'seg' }, ...[['new', 'Newest'], ['top', 'Top this month']].map(([k, l]) => h('button', { class: sort === k ? 'on' : '', onclick: () => { sort = k; loadFeed(); } }, l))),
+        h('button', { class: 'btn small', onclick: () => loadFeed() }, '↻ Refresh'),
+        h('span', { class: 'muted small' }, acc ? `Signed in as ${acc.name}` : 'You’ll get a StarShare name when you first post, like or comment.'),
+        acc ? h('button', { class: 'btn tiny', onclick: async () => { const n = await promptDlgLocal('StarShare name', 'Your public name:', acc.name); if (n) { try { await NET.rename(n); render(); } catch (e) { toast(e.message, 'warn'); } } } }, 'Rename') : null));
+      if (netErr) root.append(h('div', { class: 'notice' }, netErr));
+      const grid = h('div', { class: 'ss-grid' });
+      for (const p of posts) {
+        const img = h('img', { class: 'ss-img', loading: 'lazy', src: NET.thumbUrl(p.id), onclick: () => openPost(p.id) });
+        grid.append(h('div', { class: 'ss-card' }, img, h('div', { class: 'ss-title' }, p.title),
+          h('div', { class: 'small muted' }, `${p.author} · ${p.target || ''}${p.meta && p.meta.site ? ' · ' + p.meta.site : ''}`),
+          h('div', { class: 'ss-likes' }, h('span', { class: 'ss-heart' + (p.liked ? ' on' : '') }, p.liked ? '♥' : '♡'), ` ${p.likes}`, h('span', { class: 'muted small' }, ` · 💬 ${p.comments} · 🖼 ${p.prints}`))));
+      }
+      if (!posts.length && !loading && !netErr) grid.append(h('div', { class: 'muted' }, 'No community posts yet — publish one of yours to be the first!'));
+      root.append(grid);
+      if (loading) root.append(h('div', { class: 'muted small', style: { margin: '10px' } }, 'Loading…'));
+      else if (posts.length >= 24) root.append(h('button', { class: 'btn small', style: { margin: '10px 0' }, onclick: () => loadFeed(true) }, 'Load more'));
+    }
+    async function openPost(id) {
+      let d; try { d = await NET.detail(id); } catch (e) { toast(e.message, 'warn'); return; }
+      const p = d.post; const acc = NET.account(); const mine = acc && acc.id === p.authorId;
+      const likeBtn = h('button', { class: 'btn small' + (p.liked ? ' on' : ''), onclick: async () => { try { const r = await NET.like(id); p.liked = r.liked; p.likes += r.liked ? 1 : -1; likeBtn.textContent = `${p.liked ? '♥' : '♡'} ${p.likes}`; likeBtn.classList.toggle('on', p.liked); const q = posts.find((x) => x.id === id); if (q) { q.liked = p.liked; q.likes = p.likes; } } catch (e) { toast(e.message, 'warn'); } } }, `${p.liked ? '♥' : '♡'} ${p.likes}`);
+      const list = h('div', { class: 'ss-clist' }, ...d.comments.map((c) => h('div', { class: 'small' }, h('b', {}, c.author + ': '), c.text)));
+      const inp = h('input', { class: 'inp', placeholder: 'Write a comment…', maxlength: 280, style: { flex: 1 } });
+      const send = async () => { const t = inp.value.trim(); if (!t) return; try { const c = await NET.comment(id, t); list.append(h('div', { class: 'small' }, h('b', {}, c.author + ': '), c.text)); inp.value = ''; } catch (e) { toast(e.message, 'warn'); } };
+      inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') send(); });
+      const prints = h('div', { class: 'row wrap' }, h('span', { class: 'small muted' }, 'Prints:'), ...Object.entries(d.printSizes).map(([size, price]) => {
+        const owned = d.bought.includes(size);
+        return h('button', { class: 'btn small', disabled: owned || mine, title: mine ? 'Your own image' : '', onclick: async (e) => { if (!(await confirmDlg('Buy print', `Buy a ${size}″ print of “${p.title}” for ${money(price)}? ${p.author} gets 60%.`, 'Buy'))) return; try { await NET.buyPrint(id, size, price); e.target.disabled = true; e.target.textContent = `${size} ✓`; toast(`🖼 Print ordered — it will hang on your wall!`, 'good'); } catch (er) { toast(er.message, 'warn'); } } }, owned ? `${size} ✓` : `${size} · ${money(price)}`);
+      }));
+      const m = p.meta || {};
+      dialog({ title: `${p.title} — ${p.author}`, width: Math.min(1100, window.innerWidth - 60), body: h('div', {},
+        h('img', { src: NET.imageUrl(id), style: { width: '100%', borderRadius: '8px', background: '#000' } }),
+        h('div', { class: 'small muted', style: { margin: '6px 0' } }, [p.target, m.camera, m.optic, m.integration ? `${fmtDur(m.integration)} integration` : '', m.site, `score ${p.score}`].filter(Boolean).join(' · ')),
+        h('div', { class: 'row wrap' }, likeBtn, prints, !mine ? h('button', { class: 'btn tiny danger', onclick: async () => { if (await confirmDlg('Report', 'Report this post as inappropriate?', 'Report')) { await NET.report(id).catch(() => {}); toast('Thanks — reported.'); } } }, 'Report') : null),
+        h('h4', { style: { margin: '12px 0 6px' } }, 'Comments'), list, h('div', { class: 'row', style: { marginTop: '6px' } }, inp, h('button', { class: 'btn small primary', onclick: send }, 'Send'))),
+        buttons: [{ label: 'Close', value: true }] });
+    }
+    function promptDlgLocal(t, l, d) { return import('../wm.js').then((w) => w.promptDlg(t, l, d)); }
     function render() {
       root.innerHTML = '';
-      root.append(h('div', { class: 'ss-head' }, h('div', { class: 'ss-logo' }, '★ StarShare'), h('div', { class: 'muted' }, `@you · reputation ${Math.round(G.s.rep)} · ${G.s.posts.length} posts`)));
+      root.append(h('div', { class: 'ss-head' }, h('div', { class: 'ss-logo' }, '★ StarShare'), segBar(), h('div', { class: 'muted' }, `reputation ${Math.round(G.s.rep)} · ${G.s.posts.length} posts`)));
+      if (view === 'community') { renderCommunity(); return; }
+      root.append(h('label', { class: 'chk small', style: { margin: '4px 0 8px' } }, h('input', { type: 'checkbox', checked: PREFS.globalShare !== false, onchange: (e) => { PREFS.globalShare = e.target.checked; savePrefs(); } }), 'When I publish, also post to the global StarShare community (other players can see, like, comment and buy prints)'));
       const unposted = G.s.finals.filter((f) => !f.posted);
       if (unposted.length) {
         root.append(h('h3', {}, 'Ready to publish'));
@@ -138,7 +223,8 @@ export const shareApp = {
         h('div', { class: 'small muted' }, `${GEAR[f.optic]?.name.split('(')[0] || ''} · ${GEAR[f.cam]?.name.split('(')[0] || ''} · ${fmtDur(f.integration)} · ${fmtDate(f.created, -4)}`));
       if (!p) {
         c.append(h('div', { class: 'small' }, `Self-assessment: `, h('b', {}, `${f.score.total}/100`)), h('ul', { class: 'small fb' }, ...f.score.feedback.slice(0, 4).map((x) => h('li', {}, x))),
-          h('div', { class: 'row' }, h('button', { class: 'btn primary small', onclick: () => { if (G.guest) { toast('Publishing works from your own save (you are a guest in this session).', 'warn'); return; } const post = publish(f.id); if (post) { toast(`Published "${f.title}". Likes will roll in over the next days.`, 'good'); updatePosts(); render(); } } }, 'Publish'),
+          h('div', { class: 'row' }, h('button', { class: 'btn primary small', onclick: () => { if (G.guest) { toast('Publishing works from your own save (you are a guest in this session).', 'warn'); return; } const post = publish(f.id); if (post) { toast(`Published "${f.title}". Likes will roll in over the next days.`, 'good'); updatePosts(); render();
+              if (PREFS.globalShare !== false) NET.uploadFinal(f).then(() => toast('🌍 Also posted to the StarShare community.', 'good')).catch((e) => toast('Community upload failed: ' + e.message, 'warn')); } } }, 'Publish'),
             h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDlg('Delete', 'Delete this image?', 'Delete')) { G.s.finals = G.s.finals.filter((x) => x.id !== f.id); idbDel('final:' + f.id); idbDel('finalthumb:' + f.id); save(); render(); } } }, 'Delete')));
       } else {
         if (f.script) c.append(h('button', { class: 'btn small', style: { margin: '4px 0' }, title: 'Open the script that made this image', onclick: () => openApp('scripts', { text: f.script, name: 'Retake: ' + f.title }) }, '↻ Retake with script'));
@@ -151,7 +237,8 @@ export const shareApp = {
       const url = await idbGet('final:' + f.id);
       dialog({ title: f.title, width: Math.min(1100, window.innerWidth - 60), body: h('div', {}, h('img', { src: url, style: { width: '100%', borderRadius: '6px' } }), h('div', { class: 'small muted' }, f.score.feedback.join(' · '))), buttons: [{ label: 'Close', value: true }] });
     }
-    render();
+    render(); loadFeed();
+    NET.syncEarnings(true).then((r) => { if (r && r.amount) toast(`🌍 StarShare community: +${money(r.amount)} from likes & print sales`, 'good', 7000); }).catch(() => {});
     const rr = () => render(); on('final', rr); on('posted', rr); on('newday', rr); on('award', rr);
     return { onClose() { off('final', rr); off('posted', rr); off('newday', rr); off('award', rr); } };
   },
@@ -162,7 +249,7 @@ export const shopApp = {
   title: 'AstroMart', width: 1000, height: 700, minW: 620, minH: 420,
   icon: `<svg viewBox="0 0 40 40"><defs><linearGradient id="gm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22b573"/><stop offset="1" stop-color="#0b5a3a"/></linearGradient></defs><rect width="40" height="40" rx="9" fill="url(#gm)"/><path d="M9 12h3l3 13h13l3-9H14" stroke="#fff" stroke-width="2.4" fill="none" stroke-linejoin="round"/><circle cx="17" cy="29" r="2" fill="#fff"/><circle cx="26" cy="29" r="2" fill="#fff"/></svg>`,
   open(body) {
-    const cats = [['camera', 'Cameras', CAMERAS], ['optic', 'Lenses & Telescopes', OPTICS], ['mount', 'Mounts', MOUNTS], ['filter', 'Filters', FILTERS], ['corrector', 'Correctors', CORRECTORS], ['acc', 'Accessories', ACCESSORIES]];
+    const cats = [['camera', 'Cameras', CAMERAS], ['optic', 'Lenses & Telescopes', OPTICS], ['mount', 'Mounts', MOUNTS], ['filter', 'Filters', FILTERS], ['corrector', 'Correctors', CORRECTORS], ['acc', 'Accessories', ACCESSORIES], ['storage', 'Storage', STORAGE]];
     let cur = 'camera';
     const nav = h('div', { class: 'shop-nav' }); const list = h('div', { class: 'shop-list' }); const bal = h('div', { class: 'shop-bal' });
     body.append(h('div', { class: 'shop-root' }, h('div', { class: 'shop-side' }, h('div', { class: 'shop-logo' }, 'AstroMart'), bal, nav), list));
@@ -170,6 +257,7 @@ export const shopApp = {
       if (g.kind === 'camera') return [`${g.mono ? 'Mono' : 'Color'} · ${(g.w * g.pix / 1000).toFixed(1)}×${(g.h * g.pix / 1000).toFixed(1)}mm · ${(g.w * g.h / 1e6).toFixed(1)} MP`, `${g.pix}µm pixels · QE ${Math.round(g.qe * 100)}% · ${g.bits}-bit`, g.type === 'dslr' ? `Read noise ${g.rnHigh}–${g.rnLow} e⁻ · Hα ${Math.round((g.haFactor ?? 1) * 100)}%` : `Read noise ${g.rnHCG}–${g.rnLCG} e⁻ · ${g.cooled ? 'TEC cooled Δ' + g.deltaT + '°C' : 'uncooled'}${g.ampGlow > 5 ? ' · amp glow' : ''}`];
       if (g.kind === 'optic') return g.type === 'lens' ? [g.zoom ? `${g.zoom[0]}–${g.zoom[1]}mm f/${g.fMinAt[0]}–${g.fMinAt[1]}` : `${g.focal}mm f/${g.fMin}`, `Camera lens · ${g.weight} kg`] : [`${g.D}mm aperture · ${g.focal}mm · f/${(g.focal / g.D).toFixed(1)}`, `${g.type}${g.obstruction ? ' · ' + Math.round(g.obstruction * 100) + '% obstruction' : ''} · ${g.weight} kg`];
       if (g.kind === 'mount') return [`${g.type === 'fixed' ? 'No tracking' : g.type === 'eq' ? 'Equatorial' : 'Alt-azimuth'} · payload ${g.payload} kg`, `${g.goto ? 'GoTo' : 'Manual pointing'} · ${g.computer ? 'PC control' : 'no PC control'} · PE ±${g.pe}″`];
+      if (g.kind === 'storage') { const u = usage(); return [`+${fmtBytes(g.bytes)} · you have ${fmtBytes(u.free)} free of ${fmtBytes(u.cap)}`]; }
       if (g.kind === 'filter') return [g.monoOnly ? 'For mono cameras' : 'Fits any camera', g.cont && g.cont[0] < 0.2 && g.cont[1] < 0.2 ? 'Narrowband' : 'Broadband'];
       return [];
     }
@@ -186,7 +274,7 @@ export const shopApp = {
           if (await confirmDlg('Sell used', `Sell your ${g.name} for ${money(sellPrice)} on the used market?`, 'Sell')) { G.s.inventory = G.s.inventory.filter((x) => x !== g.id); addMoney(sellPrice, 'Sold ' + g.name); render(); }
         } }, inRig ? 'In use' : `Sell ${money(sellPrice)}`)
           : h('button', { class: 'btn primary small', disabled: G.s.money < g.price || G.guest, onclick: async () => {
-            if (await confirmDlg('Buy', `Buy ${g.name} for ${money(g.price)}?`, 'Buy')) { addMoney(-g.price, 'Bought ' + g.name); G.s.inventory.push(g.id); emit('bought', g); toast(`📦 ${g.name} delivered! Mount it via Field view → Change gear.`, 'good', 6000); save(true); render(); }
+            if (await confirmDlg('Buy', `Buy ${g.name} for ${money(g.price)}?`, 'Buy')) { addMoney(-g.price, 'Bought ' + g.name); G.s.inventory.push(g.id); emit('bought', g); toast(g.kind === 'storage' ? `💾 ${g.name} installed — ${fmtBytes(usage().free)} free now.` : `📦 ${g.name} delivered! Mount it via Field view → Change gear.`, 'good', 6000); save(true); render(); }
           } }, money(g.price));
         list.append(h('div', { class: 'shop-item' + (owned ? ' owned' : '') }, h('div', { class: 'shop-ico', html: gearIcon(g) }),
           h('div', { class: 'shop-txt' }, h('div', { class: 'shop-name' }, g.name, owned ? h('span', { class: 'tag' }, 'owned') : null), ...specs(g).map((s) => h('div', { class: 'small muted' }, s)), h('div', { class: 'small' }, g.desc)), b));
@@ -197,8 +285,8 @@ export const shopApp = {
   },
 };
 function gearIcon(g) {
-  const c = { camera: '#e05a5a', optic: '#5aa9ff', mount: '#ffb84d', filter: '#b06bff', corrector: '#4dd2c0', acc: '#9aa5b5' }[g.kind];
-  const sym = { camera: '<rect x="8" y="13" width="24" height="16" rx="3"/><circle cx="20" cy="21" r="5" fill="#000" opacity=".4"/>', optic: '<rect x="6" y="15" width="28" height="10" rx="3" transform="rotate(-20 20 20)"/>', mount: '<path d="M20 8v12M12 34l8-14 8 14"/><rect x="15" y="16" width="10" height="7"/>', filter: '<circle cx="20" cy="20" r="10"/>', corrector: '<rect x="13" y="12" width="14" height="16" rx="3"/>', acc: '<rect x="11" y="11" width="18" height="18" rx="4"/>' }[g.kind];
+  const c = { camera: '#e05a5a', optic: '#5aa9ff', mount: '#ffb84d', filter: '#b06bff', corrector: '#4dd2c0', acc: '#9aa5b5', storage: '#7dd3a8' }[g.kind];
+  const sym = { camera: '<rect x="8" y="13" width="24" height="16" rx="3"/><circle cx="20" cy="21" r="5" fill="#000" opacity=".4"/>', optic: '<rect x="6" y="15" width="28" height="10" rx="3" transform="rotate(-20 20 20)"/>', mount: '<path d="M20 8v12M12 34l8-14 8 14"/><rect x="15" y="16" width="10" height="7"/>', filter: '<circle cx="20" cy="20" r="10"/>', corrector: '<rect x="13" y="12" width="14" height="16" rx="3"/>', acc: '<rect x="11" y="11" width="18" height="18" rx="4"/>', storage: '<rect x="10" y="9" width="20" height="22" rx="3"/><circle cx="20" cy="24" r="2" fill="#000" opacity=".4"/>' }[g.kind];
   return `<svg viewBox="0 0 40 40"><rect width="40" height="40" rx="8" fill="${c}" opacity=".18"/><g fill="${c}" stroke="${c}" stroke-width="2">${sym}</g></svg>`;
 }
 
@@ -269,7 +357,7 @@ export const settingsApp = {
     const root = h('div', { class: 'pad' }); body.append(root);
     root.append(h('div', { class: 'card' }, h('h3', {}, 'Display'),
       h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: s.nightMode, onchange: (e) => { s.nightMode = e.target.checked; document.body.classList.toggle('nightmode', s.nightMode); save(); } }), 'Red night-vision mode (preserves your dark adaptation)'),
-      h('div', { class: 'row' }, h('span', {}, 'Simulation resolution'), select([[768, '768 px (fast)'], [1024, '1024 px (default)'], [1400, '1400 px (detailed, slower)']], s.quality, (v) => { s.quality = +v; save(); }), h('span', { class: 'muted small' }, 'Long side of rendered frames. Stacks need consistent resolution.'))));
+      h('div', { class: 'row' }, h('span', {}, 'Simulation resolution'), select([[1024, '1024 px (fast)'], [1600, '1600 px'], [2048, '2048 px (default)'], [3072, '3072 px (ultra, slower)'], [4096, '4096 px (extreme: slow, needs lots of RAM)']], s.quality, (v) => { s.quality = +v; save(); }), h('span', { class: 'muted small' }, 'Long side of rendered frames. Stacks need consistent resolution.'))));
     root.append(h('div', { class: 'card' }, h('h3', {}, 'About the simulation'), h('div', { class: 'small', html: `Sky imagery: <b>DSS2 color</b> & <b>Mellinger</b> surveys via CDS <i>hips2fits</i> (Université de Strasbourg/CNRS). Name resolving: CDS <b>Sesame</b> (SIMBAD/NED/VizieR). Stars, constellations & Milky Way: <b>d3-celestial</b> data (Hipparcos-based).<br><br>Each frame is simulated from photons up: aperture, transmission, QE, filter bandpass (Hα/OIII/SII are extracted from survey colors), sky brightness (Bortle level, Moon via Krisciunas–Schaefer, twilight, airmass), extinction, clouds, seeing, diffraction, defocus, coma/field curvature, vignetting & dust, tracking errors (polar misalignment drift, periodic error, wind, field rotation), shot noise, read noise, dark current & hot pixels, amp glow, bias banding, full-well & ADC clipping.` })));
     if (G.s.gameMode === 'sandbox') root.append(h('div', { class: 'card' }, h('h3', {}, 'Sandbox'),
       h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: !!(G.s.sandbox && G.s.sandbox.clearSkies), onchange: (e) => { G.s.sandbox = { ...(G.s.sandbox || {}), clearSkies: e.target.checked }; if (e.target.checked && G.s.night) G.s.night.wx.clouds = G.s.night.wx.clouds.map(() => 0); save(); } }), 'Always clear skies'),

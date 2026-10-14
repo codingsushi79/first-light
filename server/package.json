@@ -1,0 +1,10 @@
+{
+  "name": "first-light-starshare",
+  "private": true,
+  "type": "module",
+  "description": "Global StarShare API for First Light",
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.0"
+  },
+  "engines": { "node": ">=20" }
+}

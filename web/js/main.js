@@ -8,8 +8,9 @@ import '@fontsource/ibm-plex-mono/500.css';
 import '../css/hud.css';
 import { h, initWM, registerApp, openApp, toast, renderDock, $ } from './wm.js';
 import { G, save, on, emit, fmtTime, fmtDate, listSlots, loadSlot, createSlot, setAllGearIds, applySandbox, isSandbox } from './state.js';
-import { loadCatalogs, cat, bvToRGB } from './catalog.js';
-import { initWorker } from './imaging.js';
+import { loadCatalogs, cat, bvToRGB, setBodyLookup } from './catalog.js';
+import * as IM from './imaging.js';
+const { initWorker } = IM;
 import * as S from './session.js';
 import * as A from './astro.js';
 import { LOC, money, ALL_GEAR, registerLocation } from './gear.js';
@@ -21,7 +22,13 @@ import { filesApp, stackerApp, pixellabApp } from './apps/darkroom.js';
 import { shareApp, shopApp, mailApp, settingsApp, checkQuests, updatePosts } from './apps/social.js';
 import { atlasApp } from './apps/atlas.js';
 import { scriptsApp } from './apps/scripts.js';
+import { logbookApp } from './apps/logbook.js';
+import { initAchievements } from './achievements.js';
+import { toggleSpotlight, toggleNotifications } from './os-extras.js';
+import { usage, fmtBytes } from './storage.js';
+import { syncEarnings } from './starshare-net.js';
 import * as RT from './routines.js';
+import { armAudio, updateAudio, applyVolumes } from './sound.js';
 import { startTutorial } from './tutorial.js';
 import { MP, host as mpHost, join as mpJoin, leave as mpLeave, setPoseProvider } from './mp.js';
 import { showMainMenu, hideMainMenu, showPause, hidePause, isPaused, PREFS, applyPrefs, quitApp } from './menu.js';
@@ -110,6 +117,7 @@ function buildOS() {
   registerApp('share', shareApp);
   registerApp('shop', shopApp);
   registerApp('scripts', scriptsApp);
+  registerApp('logbook', logbookApp);
   registerApp('mail', mailApp);
   registerApp('settings', settingsApp);
   renderDock();
@@ -123,6 +131,7 @@ function buildOS() {
   });
 
   on('toast', (t) => toast(t.msg, t.kind || 'info'));
+  initAchievements();
   on('frame', () => checkQuests());
   on('stacked', () => checkQuests());
   on('posted', () => checkQuests());
@@ -137,6 +146,7 @@ function buildOS() {
   on('mpdisconnect', () => { toast('Lost connection to the host. Returning to the main menu…', 'bad'); setTimeout(() => location.reload(), 2500); });
   document.addEventListener('keydown', (e) => {
     if (e.target.matches && e.target.matches('input,select,textarea')) return;
+    if ((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (e.code === 'Space' && e.ctrlKey)) { e.preventDefault(); if (!isFieldVisible()) toggleSpotlight(spotActions()); return; }
     if (e.key === 'Tab') { e.preventDefault(); if (G.s.mode === 'night') isFieldVisible() ? hideField() : showField(); }
     if (e.key === 'Escape') {
       if (document.querySelector('.modal-ov')) return;
@@ -144,6 +154,22 @@ function buildOS() {
       pauseMenu();
     }
   });
+}
+
+// ---------------- Spotlight actions ----------------
+function spotActions() {
+  const night = () => G.s.mode === 'night';
+  return [
+    { title: 'Go outside to the rig', keys: 'stand walk field', when: () => night() && !isFieldVisible(), run: () => showField() },
+    { title: 'Pack up & go home', keys: 'end night home', when: night, run: () => S.endNight('user') },
+    { title: 'Plan tonight (Weather)', keys: 'head out forecast', when: () => !night(), run: () => openApp('weather') },
+    { title: 'Save game', keys: 'save', when: () => !G.guest, run: () => save(true).then(() => toast('Saved.', 'good')) },
+    { title: 'Time warp 60×', keys: 'warp fast speed', when: () => night() && MP.role !== 'client', run: () => S.setWarp(60) },
+    { title: 'Time warp 1× (real time)', keys: 'warp normal real', when: () => night() && MP.role !== 'client', run: () => S.setWarp(1) },
+    { title: 'Park the mount', keys: 'park mount', when: () => night() && S.canGoto(), run: () => S.park() },
+    { title: 'Red night-vision mode', keys: 'red night vision', run: () => { PREFS.nightMode = !PREFS.nightMode; G.s.settings.nightMode = PREFS.nightMode; document.body.classList.toggle('nightmode', PREFS.nightMode); } },
+    { title: 'Pause menu', keys: 'pause menu quit', run: () => pauseMenu() },
+  ];
 }
 
 // ---------------- menubar (macOS-style) ----------------
@@ -175,12 +201,13 @@ function buildMenubar(el) {
   mb.money = h('div', { class: 'mb-money' });
   mb.coop = h('div', { class: 'mb-coop' });
   mb.batt = h('div', { class: 'mb-batt' });
-  mb.clock = h('div', { class: 'mb-clock' });
+  mb.clock = h('div', { class: 'mb-clock', title: 'Notification Center', onclick: () => toggleNotifications() });
+  mb.search = h('button', { class: 'mb-icon', title: 'Spotlight (⌘K)', onclick: () => toggleSpotlight(spotActions()), html: '<svg viewBox="0 0 20 20" width="13" height="13"><circle cx="8.5" cy="8.5" r="5.8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M13 13l4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>' });
   mb.night = h('button', { class: 'mb-icon', title: 'Red night-vision mode', onclick: () => { PREFS.nightMode = !PREFS.nightMode; G.s.settings.nightMode = PREFS.nightMode; document.body.classList.toggle('nightmode', PREFS.nightMode); } }, h('span', { class: 'red-dot' }));
-  el.append(mb.logo, mb.app, mb.menus, mb.look, mb.status, h('div', { class: 'mb-spacer' }), mb.warp, mb.coop, mb.money, mb.night, mb.batt, mb.clock);
+  el.append(mb.logo, mb.app, mb.menus, mb.look, mb.status, h('div', { class: 'mb-spacer' }), mb.warp, mb.coop, mb.money, mb.night, mb.batt, mb.search, mb.clock);
   on('warp', (w) => mb.warp.querySelectorAll('.mb-w[data-w]').forEach((b) => b.classList.toggle('on', +b.dataset.w === w)));
   on('money', (m) => { updateMenubar(); if (m && Math.abs(m.delta) >= 1) { const f = h('div', { class: 'money-float ' + (m.delta > 0 ? 'pos' : 'neg') }, (m.delta > 0 ? '+' : '−') + money(Math.abs(m.delta))); mb.money.append(f); setTimeout(() => f.remove(), 1600); } });
-  document.addEventListener('appfocus', (e) => { const def = { capture: 'AstroCap', planetarium: 'SkyChart', framing: 'Framing', guide: 'GuideMaster', tonight: 'Tonight', weather: 'Weather', atlas: 'Atlas', files: 'Files', stacker: 'DeepStack', pixellab: 'PixelLab', share: 'StarShare', shop: 'AstroMart', mail: 'Mail', settings: 'Settings', scripts: 'Scripts' }; mb.app.textContent = def[e.detail] || 'Finder'; });
+  document.addEventListener('appfocus', (e) => { const def = { capture: 'AstroCap', planetarium: 'SkyChart', framing: 'Framing', guide: 'GuideMaster', tonight: 'Tonight', weather: 'Weather', atlas: 'Atlas', files: 'Files', stacker: 'DeepStack', pixellab: 'PixelLab', share: 'StarShare', shop: 'AstroMart', mail: 'Mail', settings: 'Settings', scripts: 'Scripts', logbook: 'Logbook' }; mb.app.textContent = def[e.detail] || 'Finder'; });
   updateMenubar();
 }
 let ffActive = false;
@@ -214,12 +241,20 @@ function updateMenubar() {
     if (exTxt) mb.status.append(h('span', { class: 'chip rec' }, exTxt));
     if (n.capOn) mb.status.append(h('span', { class: 'chip warn', title: 'Lens cap is on!' }, 'cap on'));
     if (n.dew > 0.2) mb.status.append(h('span', { class: 'chip warn' }, 'dew!'));
+    diskChip();
   } else {
     mb.batt.textContent = '100%'; mb.batt.classList.remove('low');
     mb.status.innerHTML = ''; mb.status.append(h('span', { class: 'chip' }, 'Home · daytime'), h('span', { class: 'chip' }, isSandbox() ? 'Sandbox' : 'Open Weather to plan tonight'));
+    diskChip();
   }
 }
 
+let diskT = 0, diskU = null;
+function diskChip() {
+  if (!diskU || performance.now() - diskT > 3000) { diskT = performance.now(); diskU = usage(); }
+  const f = diskU.used / diskU.cap;
+  if (f > 0.8) mb.status.append(h('span', { class: 'chip' + (f > 0.95 ? ' warn' : ''), title: 'Open Files to free up space', onclick: () => openApp('files') }, `💾 ${fmtBytes(Math.max(0, diskU.free))} free`));
+}
 // ---------------- desktop widget ----------------
 let widget;
 function buildWidget(desktop) { widget = h('div', { class: 'widget' }); desktop.append(widget); updateWidget(); }
@@ -260,12 +295,17 @@ function loop() {
     }
     try { S.tick(dt); } catch (e) { reportError(e); }
   }
-  if (now - lastUI > 250) { lastUI = now; try { updateMenubar(); updateWidget(); } catch (e) { reportError(e); } }
+  if (now - lastUI > 250) { lastUI = now; try { updateMenubar(); updateWidget(); S.refreshBodyTarget(); updateAudio(); } catch (e) { reportError(e); } }
   setTimeout(loop, 33);
 }
 setInterval(() => save(), 20000);
+// earnings from the global StarShare community (likes & print sales by other players)
+setInterval(() => { if (G.s && G.s.mode) syncEarnings().then((r) => { if (r && r.amount) toast(`🌍 StarShare community: +${money(r.amount)} from likes & print sales`, 'good', 7000); }).catch(() => {}); }, 300000);
 window.addEventListener('beforeunload', () => save(true));
 
-window.__dbg = { S, G, RT, A, MP };
+armAudio();
+window.addEventListener('fl-prefs', () => applyVolumes());
+setBodyLookup((name) => (G.s && G.s.location ? S.bodyInfo(name) : null));
+window.__dbg = { S, G, RT, A, MP, IM, openApp };
 main().catch((e) => { console.error(e); say('Failed to start: ' + e.message); });
 void emit;

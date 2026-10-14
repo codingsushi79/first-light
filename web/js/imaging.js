@@ -1,5 +1,5 @@
 // Main-thread interface to the imaging worker.
-let worker = null, seq = 0, initArgs = null;
+let worker = null, seq = 0, initArgs = null, crashes = [];
 const pending = new Map();
 // Generous per-command time limits: a stuck request must never freeze the game clock.
 const LIMIT = { render: 120e3, view: 120e3, framing: 60e3, status: 10e3, init: 30e3, stack: 10 * 60e3 };
@@ -14,7 +14,13 @@ function spawn() {
     ok ? p.resolve(res) : p.reject(new Error(err));
   };
   // A crashed worker (e.g. out of memory) fails everything in flight and is restarted.
-  worker.onerror = (e) => { console.error('imaging worker crashed', e); restart('The imaging engine crashed and was restarted'); };
+  worker.onerror = (e) => {
+    console.error('imaging worker crashed', e);
+    // a worker that dies immediately (e.g. a load error) must not restart in a tight loop
+    const t = Date.now(); crashes = crashes.filter((c) => t - c < 20000); crashes.push(t);
+    if (crashes.length > 4) { for (const [, p] of pending) { clearTimeout(p.timer); p.reject(new Error('The imaging engine failed to start')); } pending.clear(); return; }
+    restart('The imaging engine crashed and was restarted');
+  };
 }
 function restart(reason) {
   try { worker && worker.terminate(); } catch { /* ignore */ }
@@ -24,7 +30,7 @@ function restart(reason) {
   if (initArgs) worker.postMessage({ id: ++seq, cmd: 'init', args: initArgs });
 }
 export function initWorker(stars) {
-  initArgs = { stars: stars.map((s) => ({ ra: s.ra, dec: s.dec, mag: s.mag, c: s.c })), budget: 260e6 };
+  initArgs = { stars: stars.map((s) => ({ ra: s.ra, dec: s.dec, mag: s.mag, c: s.c })), budget: 900e6 };
   spawn();
   return call('init', initArgs);
 }
