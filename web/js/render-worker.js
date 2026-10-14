@@ -246,7 +246,7 @@ async function renderFrame(r, opts = {}) {
   const usePanel = r.type === 'flat' && r.flatSrc === 'panel';
   const area = Math.PI * (opt.D / 20) ** 2 * (1 - (opt.obstruction || 0) ** 2); // cm²
   const pixArea = (206.265 * g.pixEff / opt.focal) ** 2; // arcsec² per (binned) sensor pixel
-  const throughput = (opt.type === 'lens' ? 0.88 : opt.obstruction ? 0.8 : 0.92) * (1 - 0.7 * (r.env.dew || 0)) * (r.bahtinov ? 0.55 : 1);
+  const throughput = (opt.type === 'lens' ? 0.88 : opt.obstruction ? 0.8 : 0.92) * (1 - 0.7 * (r.env.dew || 0)) * (1 - 0.08 * (r.env.smudge || 0)) * (r.bahtinov ? 0.55 : 1);
   const P = K_OBJ * area * pixArea * throughput * t; // e- per sensor pixel per unit F per unit QE
   const out = { W, H, nc, k, scale, warnings: [] };
 
@@ -451,9 +451,10 @@ async function renderFrame(r, opts = {}) {
       const edgePx = (opt.edgeAb || 0) / pixUm;
       if (!r.roi) radialSmear(objE[c], W, H, edgePx, tmp);
       // dew halo
-      if ((env.dew || 0) > 0.05) {
+      const haloD = Math.min(1, (env.dew || 0) + (env.smudge || 0) * 0.55);
+      if (haloD > 0.05) {
         const halo = objE[c].slice(); boxBlur(halo, W, H, Math.round(W / 40)); boxBlur(halo, W, H, Math.round(W / 40));
-        const d = env.dew; for (let i = 0; i < N; i++) objE[c][i] = objE[c][i] * (1 - 0.6 * d) + halo[i] * 0.9 * d;
+        const d = haloD; for (let i = 0; i < N; i++) objE[c][i] = objE[c][i] * (1 - 0.6 * d) + halo[i] * 0.9 * d;
       }
     }
     // diffraction spikes & bahtinov pattern

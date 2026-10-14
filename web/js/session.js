@@ -106,7 +106,7 @@ export function envAt(ms) {
     clouds: wxAt(wx.clouds, hOff), transp: wxAt(wx.transp, hOff), seeing: wxAt(wx.seeing, hOff), temp: wxAt(wx.temp, hOff),
     dewPoint: wxAt(wx.dew, hOff), hum: wxAt(wx.hum, hOff), wind: wxAt(wx.wind, hOff),
     cloudSeed: wx.seed, cloudDrift: hOff * (0.6 + wxAt(wx.wind, hOff) / 18), windDir: (wx.seed % 360),
-    dew: n ? n.dew : 0,
+    dew: n ? n.dew : 0, smudge: n ? n.smudge || 0 : 0,
   };
 }
 function hoursSinceNightStart(ms) {
@@ -210,6 +210,34 @@ export function aimAltAz(alt, az) {
   disturb(A.sep(before.ra, before.dec, after.ra, after.dec) * 3600, 0);
   emit('mount');
 }
+// ---- dealing with dew ----
+export function useHairDryer() {
+  const n = night(); if (!n) return { error: 'Not observing.' };
+  if (!G.s.inventory.includes('hairdryer')) return { error: 'You don’t own a hair dryer (AstroMart → Accessories).' };
+  if (n.dryUntil && G.s.time < n.dryUntil) return { error: 'Already drying.' };
+  const secs = 35 + n.dew * 60;
+  n.dryUntil = G.s.time + secs * 1000;
+  n.warmUntil = n.dryUntil + 15 * 60000; // warm glass resists dew for a while
+  if (!rig().hasPower) n.battery = Math.max(0, n.battery - 3);
+  // blowing air on the tube shakes the rig
+  for (let i = 0; i < 4; i++) disturb((rng() - 0.5) * 12, (rng() - 0.5) * 12);
+  log(`Blowing warm air on the optics (~${Math.round(secs)}s).`);
+  emit('mount');
+  return { ok: true, secs };
+}
+export function wipeOptics() {
+  const n = night(); if (!n) return { error: 'Not observing.' };
+  const had = n.dew;
+  n.dew = 0;
+  n.smudge = Math.min(1, (n.smudge || 0) + 0.3 + had * 0.25);
+  // you bump the rig while wiping
+  const mount = GEAR[G.s.rig.mount];
+  const bump = (mount.type === 'fixed' ? 120 : 40) * (0.5 + rng());
+  nudge((rng() - 0.5) * bump, (rng() - 0.5) * bump);
+  log(`Wiped the optics with a sleeve. Smudge level now ${Math.round(n.smudge * 100)}%.`);
+  return { ok: true, smudge: n.smudge };
+}
+
 export function rotateCamera(deg) {
   const n = night(); if (!n) return;
   n.mount.roll = A.norm360(n.mount.roll + deg); disturb(0, 0, deg); emit('mount');
@@ -572,13 +600,16 @@ export function tick(realDtSec) {
   }
   // dew
   const opticTemp = ambient - 1.6 - (env.clouds < 0.3 ? 0.8 : 0);
+  if (n.dryUntil && s.time < n.dryUntil) n.dew = Math.max(0, n.dew - dt / 22); // hair dryer blowing
+  else if (n.dryUntil) { n.dryUntil = 0; log('Optics dried.'); emit('dried'); }
   if (n.dewHeater && ri.hasDew) n.dew = Math.max(0, n.dew - dt / 300);
+  else if (n.warmUntil && s.time < n.warmUntil) n.dew = Math.max(0, n.dew - dt / 900); // still warm from the dryer
   else {
     const rate = ri.opt ? ({ lens: 0.7, refractor: 0.5, newtonian: 0.35, sct: 1.4, rasa: 1.6, rc: 0.6 })[ri.opt.type] || 1 : 1;
     if (opticTemp < env.dewPoint + 0.3) n.dew = Math.min(1, n.dew + (dt / 1500) * rate * (1 + (env.dewPoint - opticTemp)));
     else n.dew = Math.max(0, n.dew - dt / 900);
   }
-  if (n.dew > 0.25 && !n._dewWarned) { n._dewWarned = true; emit('toast', { msg: 'Your optics are dewing up! Stars look bloated and soft.', kind: 'warn' }); }
+  if (n.dew > 0.25 && !n._dewWarned) { n._dewWarned = true; emit('toast', { msg: 'Your optics are dewing up! Stars look bloated and soft. Outside, press R → On the optics to dry or wipe them (a dew heater prevents it).', kind: 'warn' }); }
   if (n.dew < 0.05) n._dewWarned = false;
   // battery
   if (ri.hasPower) n.battery = Math.min(100, n.battery + dt / 3600 * 30);

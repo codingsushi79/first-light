@@ -426,6 +426,8 @@ export class World {
     dew.rotation.x = Math.PI / 2; dew.position.z = frontZ - 0.03; ota.add(tag(dew, 'dew')); refs.dew = dew;
     const cap = new THREE.Mesh(new THREE.CylinderGeometry((rad || 0.04) * 1.08, (rad || 0.04) * 1.08, 0.012, 32), new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.7 }));
     cap.rotation.x = Math.PI / 2; cap.position.z = frontZ + 0.006; ota.add(tag(cap, 'cap')); refs.cap = cap;
+    const fog = new THREE.Mesh(new THREE.CircleGeometry((rad || 0.04) * 0.97, 32), new THREE.MeshBasicMaterial({ color: 0xd8e2ec, transparent: true, opacity: 0, depthWrite: false }));
+    fog.position.z = frontZ + 0.003; ota.add(tag(fog, 'dew')); refs.fog = fog;
     const bc = document.createElement('canvas'); bc.width = bc.height = 128; const bg = bc.getContext('2d'); bg.fillStyle = '#222'; bg.beginPath(); bg.arc(64, 64, 62, 0, 7); bg.fill(); bg.fillStyle = '#000';
     for (let i = -60; i < 60; i += 8) { bg.fillRect(4, 64 + i, 56, 4); } bg.save(); bg.translate(96, 64); bg.rotate(0.35); for (let i = -60; i < 60; i += 8) bg.fillRect(-28, i, 56, 4); bg.restore();
     const bt = new THREE.CanvasTexture(bc);
@@ -469,6 +471,8 @@ export class World {
     refs.ota.quaternion.setFromRotationMatrix(m);
     refs.cap.visible = n.capOn; refs.baht.visible = n.bahtinov; refs.panel.visible = n.panelOn;
     refs.dew.material.emissive.setHex(n.dewHeater ? 0x400000 : 0x000000);
+    const fogA = Math.min(0.85, n.dew * 0.9 + (n.smudge || 0) * 0.25);
+    refs.fog.visible = !n.capOn && fogA > 0.02; refs.fog.material.opacity = fogA;
     refs.led.material.color.setHex(S.T.exposure ? (Math.floor(t * 2) % 2 ? 0xff2020 : 0x400000) : 0x00ff40);
   }
 

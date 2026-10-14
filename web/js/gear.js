@@ -145,6 +145,7 @@ export const ACCESSORIES = [
   { id: 'wheel', kind: 'acc', name: '7-position electronic filter wheel', price: 290, weight: 0.45, desc: 'Swap filters from the laptop. Mono cameras only.' },
   { id: 'panel', kind: 'acc', name: 'LED flat panel', price: 180, weight: 0.5, desc: 'Even light source for taking flat frames any time.' },
   { id: 'power', kind: 'acc', name: 'Portable power station (500Wh)', price: 360, weight: 5.5, desc: 'Powers laptop, mount, camera cooler and dew heater all night.' },
+  { id: 'hairdryer', kind: 'acc', handheld: true, name: '12V hair dryer (dew zapper)', price: 30, weight: 0.4, desc: 'Blast dewed-up optics clear in a minute; the glass stays warm for a while. Shakes the rig — not mid-exposure!' },
   { id: 'sqm', kind: 'acc', name: 'Sky Quality Meter', price: 140, weight: 0.1, desc: 'Measures sky darkness in mag/arcsec².' },
 ];
 

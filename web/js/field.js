@@ -40,7 +40,7 @@ function hoverText(a) {
     case 'laptop': return '[E] Sit down at the laptop';
     case 'cap': return '[E] Remove the lens cap';
     case 'bahtinov': return '[E] Take off the Bahtinov mask';
-    case 'dew': return rigInfo(G.s.rig).hasDew ? `[E] Turn dew heater ${n.dewHeater ? 'off' : 'on'}` : 'Dew strap';
+    case 'dew': return n.dew > 0.05 || (n.smudge || 0) > 0.05 ? '[E] Deal with the dew on the optics' : rigInfo(G.s.rig).hasDew ? `[E] Turn dew heater ${n.dewHeater ? 'off' : 'on'}` : 'Dew strap';
     case 'focus': return '[E] Focus by hand';
     case 'polar': return GEAR[G.s.rig.mount].polarScope ? '[E] Look through the polar scope / adjust bolts' : '[E] Polar alignment bolts';
     case 'camera': return '[E] Camera (rotate / settings)';
@@ -53,7 +53,7 @@ function doAction(a) {
   if (a === 'laptop') return sitDown();
   if (a === 'cap') { n.capOn = false; toast('Lens cap removed. (Keep it handy for dark frames!)', 'info', 2500); save(); return; }
   if (a === 'bahtinov') { n.bahtinov = false; toast('Bahtinov mask removed.', 'info', 2000); return; }
-  if (a === 'dew') { if (ri.hasDew) { n.dewHeater = !n.dewHeater; toast(`Dew heater ${n.dewHeater ? 'on' : 'off'}.`, 'info', 1800); } return; }
+  if (a === 'dew') { if (n.dew > 0.05 || (n.smudge || 0) > 0.05 || !ri.hasDew) return openPanel('optics'); if (ri.hasDew) { n.dewHeater = !n.dewHeater; toast(`Dew heater ${n.dewHeater ? 'on' : 'off'}.`, 'info', 1800); } return; }
   if (a === 'focus') return openPanel('focus');
   if (a === 'polar') return openPanel('polar');
   if (a === 'camera') return openPanel('rotation');
@@ -141,8 +141,12 @@ function buildPanel() {
   if (ri.hasBahtinov) acc.push(h('button', { class: 'btn' + (n.bahtinov ? ' on' : ''), onclick: () => { n.bahtinov = !n.bahtinov; buildPanel(); draw(); } }, n.bahtinov ? 'Remove Bahtinov mask' : 'Put on Bahtinov mask'));
   if (ri.hasDew) acc.push(h('button', { class: 'btn' + (n.dewHeater ? ' on' : ''), onclick: () => { n.dewHeater = !n.dewHeater; buildPanel(); draw(); } }, n.dewHeater ? 'Dew heater: ON' : 'Dew heater: off'));
   if (ri.hasPanel) acc.push(h('button', { class: 'btn' + (n.panelOn ? ' on' : ''), onclick: () => { n.panelOn = !n.panelOn; buildPanel(); } }, n.panelOn ? 'Flat panel ON (on aperture)' : 'Flat panel off'));
+  const hasDryer = G.s.inventory.includes('hairdryer');
+  live.dryBtn = h('button', { class: 'btn', disabled: !hasDryer, title: hasDryer ? '' : 'Buy one in AstroMart → Accessories', onclick: () => { const r = S.useHairDryer(); if (r.error) toast(r.error, 'warn'); else { toast(`Blowing warm air on the optics… (~${Math.round(r.secs)}s)${S.T.exposure ? ' — careful, that shakes the rig mid-exposure!' : ''}`, 'info', 3500); } refreshLive(); } }, hasDryer ? '🌬 Blow hair dryer on the optics' : '🌬 Hair dryer (not owned)');
+  const wipeBtn = h('button', { class: 'btn', onclick: () => { const r = S.wipeOptics(); toast(`Wiped with your sleeve. Dew gone — but you left a smudge (${Math.round(r.smudge * 100)}%): expect glowing halos around bright stars until you clean the lens at home.`, 'warn', 6000); refreshLive(); draw(); } }, '🧥 Wipe with your sleeve');
+  acc.push(live.dryBtn, wipeBtn);
   live.dew = h('div', { class: 'small muted' });
-  panel.append(sec('On the optics', h('div', { class: 'col' }, ...acc), live.dew));
+  panel.append(tagSec(sec('On the optics', h('div', { class: 'col' }, ...acc), live.dew), 'optics'));
   // aiming
   const aimSec = sec(mount.type === 'fixed' ? 'Ball head (aim by hand)' : mount.goto ? 'Hand controller' : 'Tracker (clutch / aim by hand)');
   const steps = mount.goto ? [['Slew rate 9 (3°)', 3 * 3600], ['Rate 6 (20′)', 1200], ['Rate 3 (1′)', 60], ['Rate 1 (5″)', 5]] : [['Big (5°)', 5 * 3600], ['Medium (1°)', 3600], ['Small (10′)', 600], ['Tiny (1′)', 60]];
@@ -201,7 +205,14 @@ function buildPanel() {
 function refreshLive() {
   const n = G.s.night; if (!n || !visible) return;
   const ri = S.rig(); const pt = S.pointing(); const mount = GEAR[G.s.rig.mount];
-  if (live.dew) live.dew.textContent = n.dew > 0.02 ? `Dew on optics: ${(n.dew * 100).toFixed(0)}% ${n.dew > 0.3 ? '— everything looks soft and glowing!' : ''}` : 'Optics are dry.';
+  if (live.dew) {
+    const drying = n.dryUntil && G.s.time < n.dryUntil;
+    const parts = [drying ? `Drying… ${Math.ceil((n.dryUntil - G.s.time) / 1000)}s left` : n.dew > 0.02 ? `Dew on optics: ${(n.dew * 100).toFixed(0)}%${n.dew > 0.3 ? ' — everything looks soft and glowing!' : ''}` : 'Optics are dry.'];
+    if (!drying && n.warmUntil && G.s.time < n.warmUntil && !n.dewHeater) parts.push(`Glass still warm (${Math.ceil((n.warmUntil - G.s.time) / 60000)} min).`);
+    if ((n.smudge || 0) > 0.02) parts.push(`Smudged: ${Math.round(n.smudge * 100)}% (halos until cleaned at home).`);
+    live.dew.textContent = parts.join(' ');
+    if (live.dryBtn) live.dryBtn.disabled = !G.s.inventory.includes('hairdryer') || drying;
+  }
   if (live.aim && pt) live.aim.textContent = `Pointing alt ${pt.alt.toFixed(2)}°, az ${pt.az.toFixed(2)}° ${n.mount.slew ? '· slewing…' : ''}`;
   if (live.rot && pt) live.rot.textContent = mount.type === 'eq' ? `Frame "up" points ${pt.pa.toFixed(1)}° east of north` : `Camera roll ${n.mount.roll.toFixed(1)}° from level (frame PA now ${pt.pa.toFixed(1)}°)`;
   if (live.focus) drawFocusRing(live.focus, n, ri);
@@ -285,7 +296,7 @@ async function changeGear() {
   for (let i = 0; i < 7; i++) wheelBox.append(select([['', `slot ${i + 1}: empty`], ...own('filter').map((id) => [id, `slot ${i + 1}: ${GEAR[id].name}`])], (rig.wheel || [])[i] || '', (v) => { rig.wheel = rig.wheel || []; rig.wheel[i] = v || null; }));
   if (inv.includes('wheel')) row('Filter wheel slots', wheelBox);
   const accBox = h('div', { class: 'col' });
-  for (const a of ACCESSORIES) if (inv.includes(a.id)) accBox.append(h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: (rig.acc || []).includes(a.id), onchange: (e) => { rig.acc = (rig.acc || []).filter((x) => x !== a.id); if (e.target.checked) rig.acc.push(a.id); } }), a.name));
+  for (const a of ACCESSORIES) if (inv.includes(a.id) && !a.handheld) accBox.append(h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: (rig.acc || []).includes(a.id), onchange: (e) => { rig.acc = (rig.acc || []).filter((x) => x !== a.id); if (e.target.checked) rig.acc.push(a.id); } }), a.name));
   row('Accessories', accBox);
   const ok = await dialog({ title: 'Change gear', body: box, width: 520, buttons: [{ label: 'Cancel', value: false }, { label: 'Assemble', value: true, primary: true }] });
   if (!ok) return;
