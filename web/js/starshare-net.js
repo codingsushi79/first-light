@@ -46,6 +46,7 @@ export const detail = (id) => req('GET', `/posts/${id}`, null, !!account());
 export const like = (id) => req('POST', `/posts/${id}/like`, {});
 export const comment = (id, text) => req('POST', `/posts/${id}/comment`, { text });
 export const report = (id) => req('POST', `/posts/${id}/report`, {});
+export const deletePost = (id) => req('POST', `/posts/${id}/delete`, {});
 export async function buyPrint(id, size, price) {
   if (isSandbox()) throw new Error('Sandbox money can’t buy prints from other players — switch to a career save.');
   if (G.guest) throw new Error('Buy prints from your own save.');

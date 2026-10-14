@@ -450,7 +450,7 @@ async function renderFrame(r, opts = {}) {
 
   mark('aurora');
   // --- planets, the Moon, Galilean moons (true positions, phases, surfaces) ---
-  if (!isDarkish && !usePanel && r.bodies && r.bodies.length && objE[0]) {
+  if (!isDarkish && !usePanel && objE[0] && ((r.bodies && r.bodies.length) || (r.meteors && r.meteors.length))) {
     const yOff = g.offY / (r.roi ? 1 : k);
     const rotOf = (p) => (r.rot + p[2]) * A.D2R;
     const toPix = (ra, dec, p) => {
@@ -476,7 +476,28 @@ async function renderFrame(r, opts = {}) {
       }
       return tr;
     };
-    out.bodies = drawBodies(objE, r.bodies, {
+    // meteors that flashed through the field during the exposure (tapered streaks, coloured heads)
+    out.meteors = 0;
+    for (const m of r.meteors || []) {
+      const f = Math.max(0, Math.min(1, (m.t - r.t0) / 1000 / Math.max(t, 1e-3)));
+      const p0 = toPix(m.ra, m.dec, pathAt(r.path, f)), p1 = toPix(m.ra2, m.dec2, pathAt(r.path, f));
+      const len = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]); if (len < 1) continue;
+      const inF = (p) => p[0] > -W * 0.2 && p[0] < W * 1.2 && p[1] > -H * 0.2 && p[1] < H * 1.2;
+      if (!inF(p0) && !inF(p1) && !inF([(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2])) continue;
+      const tr = transAt(Math.max(0, Math.min(W - 1, (p0[0] + p1[0]) / 2)), Math.max(0, Math.min(H - 1, (p0[1] + p1[1]) / 2)));
+      const tot = 1.0e6 * Math.pow(10, -0.4 * m.mag) * area * throughput * Math.min(m.dur, t + 0.5) * tr / (r.roi ? 1 : k * k);
+      const cn = [m.col[0], m.col[1], m.col[2]];
+      const segs = 8;
+      for (let si = 0; si < segs; si++) {
+        const a0 = si / segs, a1 = (si + 1) / segs, prof = Math.sin(Math.PI * (si + 0.5) / segs) ** 1.4 * 1.55; // rise & fade
+        for (let c = 0; c < nc; c++) {
+          const e = tot * (mono ? (flt ? flt.cont[0] + flt.cont[1] + flt.cont[2] : 3) / 3 * cam.qe : cn[c] * (flt ? flt.cont[c] : 1) * qeBand[c]) * prof / segs / (len / segs * 1.5);
+          drawLine(objE[c], W, H, p0[0] + (p1[0] - p0[0]) * a0, p0[1] + (p1[1] - p0[1]) * a0, p0[0] + (p1[0] - p0[0]) * a1, p0[1] + (p1[1] - p0[1]) * a1, e, m.mag < 0 ? 3 : 1);
+        }
+      }
+      out.meteors++;
+    }
+    if (r.bodies && r.bodies.length) out.bodies = drawBodies(objE, r.bodies, {
       W, H, nc, mono, scale, flt: r.filter, qeBand, qe: cam.qe, photons: area * throughput * t / (r.roi ? 1 : k * k), toPix, pixToEN, zenDir, pathAt: (f) => pathAt(r.path, f),
       altAt: (x, y) => sampleGrid(altG, x, y), transAt, extAt: (c, alt) => Math.pow(10, -0.4 * ext[c] * A.airmass(Math.max(alt, 0.5))), adc: r.adc,
     });
@@ -867,6 +888,23 @@ function relTransform(ref, fr, W, H, scale) {
     return [fu + W / 2, fv + H / 2];
   };
 }
+// Live stacking (EAA): running average of frames, aligned on the first one by their true pointing
+let LIVE = null;
+function liveAdd(rec, fr, reset) {
+  const { W, H, nc } = fr;
+  if (reset || !LIVE || LIVE.W !== W || LIVE.H !== H || LIVE.nc !== nc || Math.abs(LIVE.scale - fr.scale) > 1e-6 || A.sep(midPointing(LIVE.ref).ra, midPointing(LIVE.ref).dec, midPointing(rec).ra, midPointing(rec).dec) * 3600 / fr.scale > Math.max(W, H) * 0.4) {
+    LIVE = { ref: rec, W, H, nc, scale: fr.scale, sum: fr.data.map(() => new Float32Array(W * H)), cnt: new Uint16Array(W * H), n: 0, pedestal: fr.pedestal, maxADU: fr.maxADU };
+  }
+  const T = relTransform(LIVE.ref, rec, W, H, fr.scale);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const [fx, fy] = T(x + 0.5, y + 0.5); const j = y * W + x; let ok = true;
+    for (let c = 0; c < nc; c++) { const v = sampleBilinear(fr.data[c], W, H, fx - 0.5, fy - 0.5); if (Number.isNaN(v)) { ok = false; break; } LIVE.sum[c][j] += v - fr.pedestal; }
+    if (ok) LIVE.cnt[j]++;
+  }
+  LIVE.n++;
+  const data = LIVE.sum.map((a) => { const o = new Float32Array(W * H); for (let j = 0; j < o.length; j++) o[j] = LIVE.cnt[j] ? a[j] / LIVE.cnt[j] + LIVE.pedestal : LIVE.pedestal; return o; });
+  return { n: LIVE.n, fr: { W, H, nc, data, maxADU: LIVE.maxADU, pedestal: LIVE.pedestal, bodies: fr.bodies } };
+}
 function midPointing(rec) {
   const m = pathAt(rec.path, 0.5);
   const c = A.offsetPA(rec.ra, rec.dec, Math.hypot(m[0], m[1]) / 3600, Math.atan2(m[0], m[1]) * A.R2D);
@@ -1054,8 +1092,9 @@ self.onmessage = async (e) => {
       const hist = histogram(fr);
       let peakFrac = 0; for (const a of fr.data) for (let i = 0; i < a.length; i++) if (a[i] > peakFrac) peakFrac = a[i];
       peakFrac = (peakFrac - fr.pedestal) / Math.max(1, fr.maxADU - fr.pedestal);
-      const res = { W: fr.W, H: fr.H, nc: fr.nc, stats, preview: pv, thumb, hist, maxADU: fr.maxADU, trailPx: fr.trailPx || 0, warnings: fr.warnings, scale: fr.scale, bodies: fr.bodies || [], peakFrac, timing: fr.timing };
+      const res = { W: fr.W, H: fr.H, nc: fr.nc, stats, preview: pv, thumb, hist, maxADU: fr.maxADU, trailPx: fr.trailPx || 0, warnings: fr.warnings, scale: fr.scale, bodies: fr.bodies || [], meteors: fr.meteors || 0, peakFrac, timing: fr.timing };
       const tr = [pv.rgba.buffer]; if (thumb) tr.push(thumb.rgba.buffer);
+      if (args.live) { const lv = liveAdd(args.recipe, fr, args.live === 'reset'); res.live = { n: lv.n, preview: preview(lv.fr, { linked: args.linked }) }; tr.push(res.live.preview.rgba.buffer); }
       if (args.wantData) { res.data = fr.data.map((a) => a.slice()); tr.push(...res.data.map((a) => a.buffer)); }
       post(res, tr);
       return;

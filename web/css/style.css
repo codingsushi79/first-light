@@ -522,3 +522,26 @@ body.in-field .toasts { right: 344px; }
 .ss-heart { color: rgba(255,255,255,.6); } .ss-heart.on { color: #ff5f8a; }
 .ss-clist { max-height: 220px; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px; border-radius: 10px; background: rgba(0,0,0,.2); }
 .ss-img { cursor: zoom-in; }
+.fcard.sel { outline: 2px solid var(--mac-blue); outline-offset: -2px; background: rgba(10,132,255,.15); }
+.fcard.on { outline: 1px solid rgba(255,255,255,.4); outline-offset: -1px; }
+.fcard-x { opacity: .55; }
+.ss-card, .st-group { position: relative; }
+.ss-card:hover .fcard-x, .st-group:hover .fcard-x { opacity: 1; }
+.st-group .fcard-x { opacity: 0; } .ss-card .fcard-x { opacity: 0; z-index: 2; }
+
+/* AstroMart v2 */
+.shop-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.shop-main .shop-list { flex: 1; }
+.shop-side { display: flex; flex-direction: column; gap: 8px; }
+.shop-side .inp { width: 100%; }
+.shop-cat { display: flex; justify-content: space-between; align-items: center; border-radius: 10px; }
+.shop-cat.on { background: rgba(10,132,255,.35); color: #fff; }
+.shop-count { font-size: 11px; color: rgba(255,255,255,.5); background: rgba(255,255,255,.08); border-radius: 999px; padding: 0 7px; }
+.shop-tools { padding: 10px 12px 6px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid rgba(255,255,255,.06); }
+.shop-brands { display: flex; flex-wrap: wrap; gap: 5px; }
+.chipbtn { border: none; border-radius: 999px; padding: 3px 10px; font-size: 11.5px; background: rgba(255,255,255,.08); color: rgba(255,255,255,.85); cursor: pointer; }
+.chipbtn:hover { background: rgba(255,255,255,.15); } .chipbtn.on { background: rgba(255,255,255,.9); color: #000; }
+.shop-group { display: flex; align-items: baseline; gap: 8px; margin: 14px 4px 6px; padding-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.shop-group:first-child { margin-top: 2px; }
+.shop-group b { font-size: 14px; }
+.tag.sub { background: rgba(255,255,255,.08); color: rgba(255,255,255,.7); }

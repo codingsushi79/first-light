@@ -45,7 +45,7 @@ export function call(cmd, args, onProgress, transfer = []) {
     worker.postMessage({ id, cmd, args }, transfer);
   });
 }
-export const renderRecipe = (recipe, opts = {}) => call('render', { recipe, thumb: opts.thumb, linked: opts.linked, wantData: opts.wantData, opts: opts.opts });
+export const renderRecipe = (recipe, opts = {}) => call('render', { recipe, thumb: opts.thumb, linked: opts.linked, wantData: opts.wantData, opts: opts.opts, live: opts.live });
 export const viewRecipe = (recipe, linked) => call('view', { recipe, linked });
 export const stackJob = (job, onProgress) => call('stack', job, onProgress);
 export const framingImage = (ra, dec, fov, size) => call('framing', { ra, dec, fov, size });

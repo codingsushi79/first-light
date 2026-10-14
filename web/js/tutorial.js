@@ -50,7 +50,7 @@ const STEPS = [
     text: 'Open <b>StarShare</b> (pink star) and click <b>Publish</b> on your image. Likes — and money from prints — arrive over the next few days.',
     done: () => flag('posted') },
   { id: 'finish', title: 'Your first astrophoto! 🎉', manual: `Collect $${GIFT.toLocaleString()}`, final: true,
-    text: `Ray from the astronomy club loved it and sends you <b>$${GIFT.toLocaleString()}</b> for your first real gear. Open <b>AstroMart</b>: a star tracker (Star Voyager, $380) is the biggest single upgrade — it lets you expose for minutes instead of seconds.` },
+    text: `Ray from the astronomy club loved it and sends you <b>$${GIFT.toLocaleString()}</b> for your first real gear. Open <b>AstroMart</b>: a star tracker (Sky-Watcher Star Adventurer 2i, $379) is the biggest single upgrade — it lets you expose for minutes instead of seconds.` },
 ];
 
 let panel = null, timer = null;

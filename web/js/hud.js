@@ -6,6 +6,7 @@ import { GEAR } from './gear.js';
 import * as S from './session.js';
 import * as RT from './routines.js';
 import { MP, sendChat } from './mp.js';
+import { hourlyRate, activeShowers } from './meteors.js';
 
 const row = (k, v, cls = '') => h('div', { class: 'row ' + cls }, h('span', { class: 'lbl' }, k), h('span', { class: 'mono' }, v));
 const gauge = (label, frac, value, cls = '') => h('div', { class: 'gauge' }, h('span', { class: 'gauge-label' }, label), h('span', { class: 'gauge-bar' }, h('span', { class: 'gauge-fill ' + cls, style: { width: Math.round(Math.max(0, Math.min(1, frac)) * 100) + '%' } })), h('span', { class: 'gauge-value' }, value));
@@ -67,6 +68,7 @@ export function createHud(root, cb) {
     sky.innerHTML = '';
     sky.append(h('div', { class: 'panel-title' }, 'SKY'), row('SUN', `${env.sunAlt.toFixed(1)}° ${sunState}`), row('MOON', `${Math.round(env.moonIllum * 100)}% ${env.moonAlt > 0 ? '↑ ' + env.moonAlt.toFixed(0) + '°' : 'BELOW'}`),
       row('CLOUDS', `${Math.round(env.clouds * 100)} %`, env.clouds > 0.4 ? 'warn' : ''), row('SEEING', `${env.seeing.toFixed(1)}″`), row('TEMP / DEW PT', `${env.temp.toFixed(1)} / ${env.dewPoint.toFixed(1)} °C`), row('SQM', `${loc.sqm.toFixed(2)} · B${loc.bortle}`),
+      row('METEORS', (() => { const sh = activeShowers(G.s.time)[0]; const r = env.sunAlt < -12 ? hourlyRate(G.s.time, env.lat, env.lon) : 0; return `~${Math.round(r)}/H${sh && sh.zhr > 3 ? ' · ' + sh.name.toUpperCase() : ''}`; })(), activeShowers(G.s.time).some((x) => x.zhr > 40) ? 'ok' : ''),
       row('GEOMAG', env.aurora && env.aurora.strength > 0.05 ? `KP ${env.kp.toFixed(1)} · AURORA ${env.aurora.strength > 0.5 ? 'STRONG' : 'VISIBLE'}` : `KP ${env.kp.toFixed(1)}`, env.aurora && env.aurora.strength > 0.05 ? 'ok' : ''));
     // cautions
     const flags = [];

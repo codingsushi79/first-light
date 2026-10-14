@@ -225,13 +225,20 @@ export const shareApp = {
         c.append(h('div', { class: 'small' }, `Self-assessment: `, h('b', {}, `${f.score.total}/100`)), h('ul', { class: 'small fb' }, ...f.score.feedback.slice(0, 4).map((x) => h('li', {}, x))),
           h('div', { class: 'row' }, h('button', { class: 'btn primary small', onclick: () => { if (G.guest) { toast('Publishing works from your own save (you are a guest in this session).', 'warn'); return; } const post = publish(f.id); if (post) { toast(`Published "${f.title}". Likes will roll in over the next days.`, 'good'); updatePosts(); render();
               if (PREFS.globalShare !== false) NET.uploadFinal(f).then(() => toast('🌍 Also posted to the StarShare community.', 'good')).catch((e) => toast('Community upload failed: ' + e.message, 'warn')); } } }, 'Publish'),
-            h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDlg('Delete', 'Delete this image?', 'Delete')) { G.s.finals = G.s.finals.filter((x) => x.id !== f.id); idbDel('final:' + f.id); idbDel('finalthumb:' + f.id); save(); render(); } } }, 'Delete')));
+            h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDlg('Delete', 'Delete this image?', 'Delete')) deleteFinal(f); } }, 'Delete')));
       } else {
+        c.append(h('button', { class: 'fcard-x', title: 'Delete this image', onclick: async (e) => { e.stopPropagation(); if (!(await confirmDlg('Delete image', `Delete “${f.title}”${f.globalId ? ' (also removes it from the StarShare community)' : ''}? Likes already earned are kept.`, 'Delete'))) return; deleteFinal(f); } }, '✕'));
         if (f.script) c.append(h('button', { class: 'btn small', style: { margin: '4px 0' }, title: 'Open the script that made this image', onclick: () => openApp('scripts', { text: f.script, name: 'Retake: ' + f.title }) }, '↻ Retake with script'));
         c.append(h('div', { class: 'ss-likes' }, `♥ ${p.likesNow}`, p.award && p.awardPaid ? h('span', { class: 'award' }, '🏆 ' + p.award) : null, h('span', { class: 'muted small' }, ` · score ${f.score.total}`)),
           h('div', { class: 'ss-comments' }, ...p.comments.slice(0, Math.max(1, Math.ceil(p.comments.length * Math.min(1, p.likesNow / Math.max(1, p.likesTotal) + 0.2)))).map((cm) => h('div', { class: 'small' }, h('b', {}, cm.who + ': '), cm.txt))));
       }
       return c;
+    }
+    function deleteFinal(f) {
+      G.s.finals = G.s.finals.filter((x) => x.id !== f.id); G.s.posts = G.s.posts.filter((x) => x.id !== f.id);
+      idbDel('final:' + f.id); idbDel('finalthumb:' + f.id); save(); emit('storage');
+      if (f.globalId) NET.deletePost(f.globalId).then(() => { posts = posts.filter((p) => p.id !== f.globalId); }).catch((e) => toast('Could not remove it from the community: ' + e.message, 'warn'));
+      toast(`Deleted “${f.title}”.`, 'info', 2500); render();
     }
     async function big(f) {
       const url = await idbGet('final:' + f.id);
@@ -250,9 +257,18 @@ export const shopApp = {
   icon: `<svg viewBox="0 0 40 40"><defs><linearGradient id="gm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22b573"/><stop offset="1" stop-color="#0b5a3a"/></linearGradient></defs><rect width="40" height="40" rx="9" fill="url(#gm)"/><path d="M9 12h3l3 13h13l3-9H14" stroke="#fff" stroke-width="2.4" fill="none" stroke-linejoin="round"/><circle cx="17" cy="29" r="2" fill="#fff"/><circle cx="26" cy="29" r="2" fill="#fff"/></svg>`,
   open(body) {
     const cats = [['camera', 'Cameras', CAMERAS], ['optic', 'Lenses & Telescopes', OPTICS], ['mount', 'Mounts', MOUNTS], ['filter', 'Filters', FILTERS], ['corrector', 'Correctors', CORRECTORS], ['acc', 'Accessories', ACCESSORIES], ['storage', 'Storage', STORAGE]];
-    let cur = 'camera';
+    let cur = 'camera', brand = 'all', q = '', sortBy = 'brand', ownedOnly = false;
+    const SUB = { camera: (g) => (g.type === 'dslr' ? 'DSLR & mirrorless' : g.planetary ? 'Planetary' : g.guideOnly ? 'Guide' : g.mono ? 'Cooled mono' : 'Cooled color'),
+      optic: (g) => (g.type === 'lens' ? 'Camera lenses' : g.type === 'refractor' ? 'Refractors' : g.type === 'newtonian' ? 'Newtonians' : g.type === 'sct' || g.type === 'mak' ? 'Catadioptrics (SCT / Mak)' : 'Astrographs'),
+      mount: (g) => (g.type === 'fixed' ? 'Tripods' : !g.goto ? 'Star trackers' : g.type === 'altaz' ? 'Alt-az' : g.payload >= 20 ? 'Heavy-duty EQ' : 'Equatorial'),
+      filter: (g) => (g.monoOnly ? 'LRGB (mono)' : g.cont && g.cont[0] < 0.2 && g.cont[1] < 0.2 ? 'Narrowband' : 'Light pollution & broadband'),
+      corrector: (g) => (g.barlow ? 'Barlows' : g.factor < 1 ? 'Reducers' : 'Flatteners & coma correctors') };
     const nav = h('div', { class: 'shop-nav' }); const list = h('div', { class: 'shop-list' }); const bal = h('div', { class: 'shop-bal' });
-    body.append(h('div', { class: 'shop-root' }, h('div', { class: 'shop-side' }, h('div', { class: 'shop-logo' }, 'AstroMart'), bal, nav), list));
+    const search = h('input', { class: 'inp', placeholder: 'Search gear…', oninput: (e) => { q = e.target.value.toLowerCase(); renderList(); } });
+    search.addEventListener('keydown', (e) => e.stopPropagation());
+    const tools = h('div', { class: 'shop-tools' });
+    const main = h('div', { class: 'shop-main' }, tools, list);
+    body.append(h('div', { class: 'shop-root' }, h('div', { class: 'shop-side' }, h('div', { class: 'shop-logo' }, 'AstroMart'), bal, search, nav), main));
     function specs(g) {
       if (g.kind === 'camera') return [`${g.mono ? 'Mono' : 'Color'} · ${(g.w * g.pix / 1000).toFixed(1)}×${(g.h * g.pix / 1000).toFixed(1)}mm · ${(g.w * g.h / 1e6).toFixed(1)} MP`, `${g.pix}µm pixels · QE ${Math.round(g.qe * 100)}% · ${g.bits}-bit`, g.type === 'dslr' ? `Read noise ${g.rnHigh}–${g.rnLow} e⁻ · Hα ${Math.round((g.haFactor ?? 1) * 100)}%` : `Read noise ${g.rnHCG}–${g.rnLCG} e⁻ · ${g.cooled ? 'TEC cooled Δ' + g.deltaT + '°C' : 'uncooled'}${g.ampGlow > 5 ? ' · amp glow' : ''}`];
       if (g.kind === 'optic') return g.type === 'lens' ? [g.zoom ? `${g.zoom[0]}–${g.zoom[1]}mm f/${g.fMinAt[0]}–${g.fMinAt[1]}` : `${g.focal}mm f/${g.fMin}`, `Camera lens · ${g.weight} kg`] : [`${g.D}mm aperture · ${g.focal}mm · f/${(g.focal / g.D).toFixed(1)}`, `${g.type}${g.obstruction ? ' · ' + Math.round(g.obstruction * 100) + '% obstruction' : ''} · ${g.weight} kg`];
@@ -261,24 +277,41 @@ export const shopApp = {
       if (g.kind === 'filter') return [g.monoOnly ? 'For mono cameras' : 'Fits any camera', g.cont && g.cont[0] < 0.2 && g.cont[1] < 0.2 ? 'Narrowband' : 'Broadband'];
       return [];
     }
-    function render() {
-      nav.innerHTML = ''; list.innerHTML = '';
-      bal.innerHTML = isSandbox() ? 'Sandbox<br><b>∞</b><br><span class="small">Everything is unlocked.</span>' : G.guest ? 'Guest<br><b>—</b><br><span class="small">The host buys gear.</span>' : `Balance<br><b>${money(G.s.money)}</b>`;
-      for (const [k, l] of cats) nav.append(h('div', { class: 'shop-cat' + (k === cur ? ' on' : ''), onclick: () => { cur = k; render(); } }, l));
-      const items = cats.find((c) => c[0] === cur)[2];
-      for (const g of items) {
+    function itemRow(g) {
         const owned = G.s.inventory.includes(g.id);
         const inRig = Object.values(G.s.rig).flat().includes(g.id);
         const sellPrice = Math.round(g.sell ?? g.price * 0.6);
-        const b = owned && (isSandbox() || G.guest) ? h('span', { class: 'muted small' }, inRig ? 'In use' : 'Owned') : owned ? h('button', { class: 'btn small', disabled: inRig, title: inRig ? 'Currently mounted in your rig' : '', onclick: async () => {
+        const b = owned && (isSandbox() || G.guest) ? h('span', { class: 'muted small' }, inRig ? 'In use' : 'Owned') : owned ? h('button', { class: 'btn small', disabled: inRig || g.price === 0, title: inRig ? 'Currently mounted in your rig' : '', onclick: async () => {
           if (await confirmDlg('Sell used', `Sell your ${g.name} for ${money(sellPrice)} on the used market?`, 'Sell')) { G.s.inventory = G.s.inventory.filter((x) => x !== g.id); addMoney(sellPrice, 'Sold ' + g.name); render(); }
         } }, inRig ? 'In use' : `Sell ${money(sellPrice)}`)
           : h('button', { class: 'btn primary small', disabled: G.s.money < g.price || G.guest, onclick: async () => {
             if (await confirmDlg('Buy', `Buy ${g.name} for ${money(g.price)}?`, 'Buy')) { addMoney(-g.price, 'Bought ' + g.name); G.s.inventory.push(g.id); emit('bought', g); toast(g.kind === 'storage' ? `💾 ${g.name} installed — ${fmtBytes(usage().free)} free now.` : `📦 ${g.name} delivered! Mount it via Field view → Change gear.`, 'good', 6000); save(true); render(); }
-          } }, money(g.price));
-        list.append(h('div', { class: 'shop-item' + (owned ? ' owned' : '') }, h('div', { class: 'shop-ico', html: gearIcon(g) }),
-          h('div', { class: 'shop-txt' }, h('div', { class: 'shop-name' }, g.name, owned ? h('span', { class: 'tag' }, 'owned') : null), ...specs(g).map((s) => h('div', { class: 'small muted' }, s)), h('div', { class: 'small' }, g.desc)), b));
+          } }, g.price ? money(g.price) : 'Free');
+        return h('div', { class: 'shop-item' + (owned ? ' owned' : '') }, h('div', { class: 'shop-ico', html: gearIcon(g) }),
+          h('div', { class: 'shop-txt' }, h('div', { class: 'shop-name' }, g.name, owned ? h('span', { class: 'tag' }, 'owned') : null, SUB[g.kind] ? h('span', { class: 'tag sub' }, SUB[g.kind](g)) : null), ...specs(g).map((s) => h('div', { class: 'small muted' }, s)), h('div', { class: 'small' }, g.desc)), b);
+    }
+    function render() {
+      nav.innerHTML = '';
+      bal.innerHTML = isSandbox() ? 'Sandbox<br><b>∞</b><br><span class="small">Everything is unlocked.</span>' : G.guest ? 'Guest<br><b>—</b><br><span class="small">The host buys gear.</span>' : `Balance<br><b>${money(G.s.money)}</b>`;
+      for (const [k, l, arr] of cats) nav.append(h('div', { class: 'shop-cat' + (k === cur ? ' on' : ''), onclick: () => { cur = k; brand = 'all'; render(); } }, h('span', {}, l), h('span', { class: 'shop-count' }, arr.length)));
+      renderList();
+    }
+    function renderList() {
+      tools.innerHTML = ''; list.innerHTML = '';
+      const all = cats.find((c) => c[0] === cur)[2];
+      const brands = [...new Set(all.map((g) => g.brand || 'Other'))].sort();
+      tools.append(h('div', { class: 'shop-brands' }, ...['all', ...brands].map((b) => h('button', { class: 'chipbtn' + (brand === b ? ' on' : ''), onclick: () => { brand = b; renderList(); } }, b === 'all' ? `All brands` : `${b} · ${all.filter((g) => (g.brand || 'Other') === b).length}`))),
+        h('div', { class: 'row', style: { gap: '8px' } }, h('span', { class: 'small muted' }, 'Group by'), select([['brand', 'Brand'], ['type', 'Type'], ['price', 'Price (low → high)'], ['pricedesc', 'Price (high → low)']], sortBy, (v) => { sortBy = v; renderList(); }),
+          h('label', { class: 'chk small' }, h('input', { type: 'checkbox', checked: ownedOnly, onchange: (e) => { ownedOnly = e.target.checked; renderList(); } }), 'Owned only')));
+      let items = all.filter((g) => (brand === 'all' || (g.brand || 'Other') === brand) && (!ownedOnly || G.s.inventory.includes(g.id)) && (!q || `${g.name} ${g.brand} ${g.desc}`.toLowerCase().includes(q)));
+      if (sortBy === 'price' || sortBy === 'pricedesc') { items.sort((a, b) => (a.price - b.price) * (sortBy === 'price' ? 1 : -1)); for (const g of items) list.append(itemRow(g)); }
+      else {
+        const key = sortBy === 'type' && SUB[cur] ? SUB[cur] : (g) => g.brand || 'Other';
+        const groups = {}; for (const g of items) (groups[key(g)] = groups[key(g)] || []).push(g);
+        for (const k of Object.keys(groups).sort()) { list.append(h('div', { class: 'shop-group' }, h('b', {}, k), h('span', { class: 'muted small' }, `${groups[k].length} item${groups[k].length > 1 ? 's' : ''}`))); for (const g of groups[k].sort((a, b) => a.price - b.price)) list.append(itemRow(g)); }
       }
+      if (!items.length) list.append(h('div', { class: 'muted pad' }, 'Nothing matches.'));
+      list.scrollTop = 0;
     }
     render(); const rr = () => render(); on('money', rr);
     return { onClose() { off('money', rr); } };

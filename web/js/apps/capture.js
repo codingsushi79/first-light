@@ -27,6 +27,7 @@ export const captureApp = {
       },
     });
     let showCross = false, showStars = false;
+    let liveOn = false, liveReset = true, liveN = 0;
     const saveNote = h('div', { class: 'small', style: { marginTop: '4px' } });
     let warnedCrop = false;
     const histCanvas = h('canvas', { class: 'hist' });
@@ -36,7 +37,8 @@ export const captureApp = {
 
     function showFrame(fr) {
       if (!fr) return;
-      viewer.setImage(canvasFromRGBA(fr.res.preview));
+      viewer.setImage(canvasFromRGBA(liveOn && fr.res.live ? fr.res.live.preview : fr.res.preview));
+      if (fr.res.live) liveN = fr.res.live.n;
       drawHistogram(histCanvas, fr.res.hist);
       const st = fr.res.stats, m = fr.meta;
       const ri = S.rig();
@@ -49,6 +51,8 @@ export const captureApp = {
       it('Sat', `${(st.saturated * 100).toFixed(2)}%`, st.saturated > 0.005 ? 'warn' : ''); it('Temp', `${m.temp}°C`);
       if (m.filter) it('Filter', FILTERS.find((f) => f.id === m.filter)?.name.split(' ')[0] || m.filter);
       if (fr.res.trailPx > 3) it('Trail', `${fr.res.trailPx.toFixed(0)}px`, 'warn');
+      if (liveOn && fr.res.live) it('LIVE STACK', `${fr.res.live.n} frames · noise ÷${Math.sqrt(fr.res.live.n).toFixed(1)}`, 'ok');
+      if (fr.res.meteors) it('☄', `${fr.res.meteors} meteor${fr.res.meteors > 1 ? 's' : ''}!`, 'ok');
       if (fr.res.warnings && fr.res.warnings.includes('offline')) it('⚠', 'Survey offline: catalog stars only', 'warn');
       void ri;
     }
@@ -158,7 +162,10 @@ export const captureApp = {
         h('div', { class: 'row wrap', style: { marginTop: '6px' } },
           h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: G.s.settings.linked, onchange: (e) => { G.s.settings.linked = e.target.checked; save(); } }), 'Linked stretch'),
           h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: showCross, onchange: (e) => { showCross = e.target.checked; viewer.draw(); } }), 'Crosshair'),
-          h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: showStars, onchange: (e) => { showStars = e.target.checked; viewer.draw(); } }), 'Mark stars'))),
+          h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: showStars, onchange: (e) => { showStars = e.target.checked; viewer.draw(); } }), 'Mark stars')),
+          h('div', { class: 'row wrap', style: { marginTop: '6px' } },
+            h('label', { class: 'chk', title: 'Electronically assisted astronomy: every light frame (Capture or Loop) is aligned and averaged live — watch the noise melt away.' }, h('input', { type: 'checkbox', checked: liveOn, onchange: (e) => { liveOn = e.target.checked; liveReset = true; if (S.T.lastFrame) showFrame(S.T.lastFrame); } }), 'Live stack (EAA)'),
+            h('button', { class: 'btn tiny', onclick: () => { liveReset = true; liveN = 0; toast('Live stack cleared — the next frame starts a new one.', 'info', 2000); } }, 'Reset stack'))),
         h('div', { class: 'card tips' }, h('h3', {}, 'Tips'), h('div', { class: 'muted small', html: tipsHTML(ri) })));
     }
     function tipsHTML(ri) {
@@ -179,7 +186,8 @@ export const captureApp = {
       const willSave = !isLoop && !roi;
       if (!isLoop && roi && !warnedCrop) { warnedCrop = true; toast('1:1 crop view is for focusing — these frames are NOT saved. Switch View to “Full frame” to save frames to Files.', 'warn', 7000); }
       try {
-        await S.expose({ type: cs.type, exp: cs.exp, gain: cs.gain, offset: cs.offset, bin: cs.bin || 1, roi, target: cs.target || (G.s.target ? G.s.target.name : 'Untitled'), save: !isLoop && !roi });
+        const live = liveOn && cs.type === 'light' && !roi ? (liveReset ? 'reset' : true) : undefined; if (live) liveReset = false;
+        await S.expose({ type: cs.type, exp: cs.exp, gain: cs.gain, offset: cs.offset, bin: cs.bin || 1, roi, target: cs.target || (G.s.target ? G.s.target.name : 'Untitled'), save: !isLoop && !roi, live });
       } catch (e) { toast(e.message, 'warn'); loopOn = false; return; }
       saveNote.innerHTML = willSave ? `<span style="color:var(--good)">✓ Saved to Files</span> <span class="muted">(${cs.target || (G.s.target ? G.s.target.name : 'Untitled')} · ${cs.type})</span>`
         : `<span style="color:var(--warn)">Preview only — not saved</span> <span class="muted">(${isLoop ? 'Loop' : '1:1 crop view'}; use Capture with View = Full frame)</span>`;

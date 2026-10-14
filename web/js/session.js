@@ -8,6 +8,7 @@ import { renderRecipe, makeThumb } from './imaging.js';
 import { planetInfo, moonInfo, PLANET_NAMES } from './planets.js';
 import { auroraState, kpSeries } from './aurora.js';
 import { ensureSpace, frameBytes } from './storage.js';
+import * as MET from './meteors.js';
 
 export const WARPS = [1, 5, 20, 60, 200, 600];
 export const T = { warp: 1, busy: false, waiters: [], exposure: null, lastFrame: null, guideHist: [], lastGuideT: 0 };
@@ -525,7 +526,7 @@ function _expose(params) {
     focusDelta: focusDeltaUm(), capOn: n.capOn, bahtinov: n.bahtinov,
     env: { ...env, loc: { ...env.loc } },
     flatSrc: n.panelOn ? 'panel' : 'sky', panelLevel: params.panelLevel || 1,
-    roi: params.roi || null, quality: G.s.settings.quality,
+    roi: params.roi || null, quality: params.save === false && !params.live && !params.roi ? Math.min(1024, G.s.settings.quality) : G.s.settings.quality, // unsaved previews/solves render fast
     seed: hashStr(id || uid()),
     target: params.target || '', label: params.label || '',
     bodies: bodiesNear(pt.ra, pt.dec, Math.hypot(ri.fovW, ri.fovH) / 2 + 0.05, G.s.time + exp * 500),
@@ -556,6 +557,11 @@ async function finishExposure() {
   const ex = T.exposure; if (!ex || ex.rendering) return;
   ex.rendering = true; T.busy = true;
   const r = ex.recipe;
+  // meteors that crossed the sky during the exposure (the worker keeps the ones in the field)
+  if (r.type === 'light' && !r.capOn && r.exp >= 0.5) {
+    const ri = rig(); const rad = Math.hypot(ri.fovW || 10, ri.fovH || 10) / 2 + 15;
+    r.meteors = MET.between(r.t0, r.t0 + r.exp * 1000).filter((m) => A.sep(r.ra, r.dec, m.ra, m.dec) < rad || A.sep(r.ra, r.dec, m.ra2, m.dec2) < rad).map((m) => ({ ...m }));
+  }
   // apply disturbances that happened during the exposure
   for (const d of ex.disturb) {
     const fracStart = d.tau / r.exp;
@@ -565,7 +571,7 @@ async function finishExposure() {
     }
   }
   try {
-    const res = await renderRecipe(r, { thumb: !!r.id, linked: G.s.settings.linked });
+    const res = await renderRecipe(r, { thumb: !!r.id, linked: G.s.settings.linked, live: r.type === 'light' && !r.roi && ex.params.live ? ex.params.live : undefined });
     T.busy = false; // always release the clock, even if the exposure was aborted meanwhile
     if (T.exposure !== ex || !night()) return; // aborted / night ended meanwhile
     T.exposure = null;
@@ -573,6 +579,7 @@ async function finishExposure() {
       id: r.id, session: night().id, type: r.type, target: r.target, label: r.label, exp: r.exp, gain: r.gain, offset: r.offset, bin: r.bin,
       filter: r.filter ? r.filter.id : null, temp: +r.sensorTemp.toFixed(1), t0: r.t0, loc: G.s.location,
       cam: r.cam.id, optic: r.opt.id, focal: Math.round(r.opt.focal), fstop: +(r.opt.focal / r.opt.D).toFixed(1), quality: r.quality,
+      meteors: res.meteors || 0,
       stats: { hfr: +res.stats.hfr.toFixed(2), stars: res.stats.stars, median: Math.round(res.stats.median), ecc: +res.stats.ecc.toFixed(2), sat: res.stats.saturated, trail: +res.trailPx.toFixed(1) },
       recipe: r, scale: res.scale,
     };
@@ -621,6 +628,7 @@ export function tick(realDtSec) {
   s.time += dt * 1000;
   const env = envAt(s.time);
   const ri = rig(); const mount = GEAR[s.rig.mount];
+  if (env.sunAlt < -8) MET.advance(s.time, env.lat, env.lon);
 
   // slew completion
   const m = n.mount;

@@ -33,6 +33,7 @@ export const ACHIEVEMENTS = [
   ['ice-giants', 'Ice Giants', 'Image Uranus and Neptune.', 400, (l) => l.bodies.Uranus && l.bodies.Neptune],
   ['lucky', 'Lucky Imager', 'Lucky-stack a planetary video.', 150, (l, s) => s.stacks.some((x) => x.planetary)],
   ['aurora', 'Northern Lights', 'Photograph an aurora.', 400, (l) => !!l.aurora],
+  ['meteor', 'Shooting Star', 'Catch a meteor in a saved light frame.', 250, (l) => !!l.meteor],
   ['sites5', 'Globetrotter', 'Observe from 5 different sites.', 500, (l) => Object.keys(l.sites).length >= 5],
   ['bortle1', 'Dark Sky Pilgrim', 'Observe under a Bortle 1 sky.', 300, (l) => Object.keys(l.sites).some((id) => LOC[id] && LOC[id].bortle <= 1)],
   ['south', 'Southern Skies', 'Observe from south of latitude −20°.', 300, (l) => Object.keys(l.sites).some((id) => LOC[id] && LOC[id].lat < -20)],
@@ -68,6 +69,7 @@ export function initAchievements() {
     for (const nm of b) if (!l.bodies[nm]) l.bodies[nm] = { t: G.s.time, loc: n.loc };
     const au = meta.recipe.env && meta.recipe.env.aurora;
     if (au && au.strength > 0.2 && meta.type === 'light' && meta.recipe.opt.focal < 60) l.aurora = l.aurora || G.s.time;
+    if (meta.meteors > 0 && meta.type === 'light') l.meteor = l.meteor || G.s.time;
     // prune per-night lists to the last 40 nights
     const keys = Object.keys(l.nights); if (keys.length > 40) delete l.nights[keys[0]];
     check();

@@ -84,20 +84,49 @@ export const filesApp = {
         for (const [k, arr] of Object.entries(byT)) tree.append(h('div', { class: 'ft-item' + (cur && cur.key === s.id + k ? ' on' : ''), onclick: () => { cur = { key: s.id + k, frames: arr }; renderTree(); renderGrid(); } }, `${k} (${arr.length})`, h('span', { class: 'ft-size' }, fmtBytes(arr.reduce((a, f) => a + (f.bytes || frameBytes(f)), 0)))));
       }
     }
+    let sel = new Set(), shown = null;
+    async function delSelected(ids) {
+      ids = [...ids]; if (!ids.length) return;
+      const bytes = ids.reduce((a, id) => { const f = G.s.frames.find((x) => x.id === id); return a + (f ? f.bytes || frameBytes(f) : 0); }, 0);
+      if (ids.length > 1 && !(await confirmDlg('Delete frames', `Delete ${ids.length} frames (${fmtBytes(bytes)})? This can’t be undone.`, 'Delete'))) return;
+      deleteFrames(ids);
+      cur.frames = cur.frames.filter((x) => !ids.includes(x.id)); sel = new Set([...sel].filter((id) => !ids.includes(id)));
+      if (shown && ids.includes(shown.id)) { shown = null; viewer.setImage(null); meta.textContent = ''; delBtn.style.display = 'none'; }
+      toast(`Deleted ${ids.length} frame${ids.length > 1 ? 's' : ''} · freed ${fmtBytes(bytes)}`, 'info', 2500);
+      renderTree(); renderGrid();
+    }
+    const delBtn = h('button', { class: 'btn small danger', style: { display: 'none', alignSelf: 'flex-start' }, onclick: () => shown && delSelected([shown.id]) }, '🗑 Delete this frame');
+    right.insertBefore(delBtn, meta);
+    body.tabIndex = 0;
+    body.addEventListener('keydown', (e) => {
+      if (e.target.matches && e.target.matches('input,textarea,select')) return;
+      if ((e.key === 'Delete' || e.key === 'Backspace') && (sel.size || shown)) { e.preventDefault(); e.stopPropagation(); delSelected(sel.size ? sel : [shown.id]); }
+      if (e.key === 'a' && (e.metaKey || e.ctrlKey) && cur) { e.preventDefault(); sel = new Set(cur.frames.map((f) => f.id)); renderGrid(); }
+      if (e.key === 'Escape' && sel.size) { sel.clear(); renderGrid(); }
+    });
     async function renderGrid() {
       grid.innerHTML = '';
       if (!cur) return;
       const total = cur.frames.reduce((a, f) => a + (f.type === 'light' ? f.exp : 0), 0);
-      grid.append(h('div', { class: 'row small muted' }, `${cur.frames.length} frames · ${fmtDur(total)} integration · ${fmtBytes(cur.frames.reduce((a, f) => a + (f.bytes || frameBytes(f)), 0))}`, h('button', { class: 'btn tiny danger', onclick: async () => { if (await confirmDlg('Delete frames', `Delete all ${cur.frames.length} frames in this folder?`, 'Delete')) { deleteFrames(cur.frames.map((f) => f.id)); cur = null; renderTree(); renderGrid(); } } }, 'Delete folder')));
-      for (const f of cur.frames) {
+      grid.append(h('div', { class: 'row small muted wrap' }, `${cur.frames.length} frames · ${fmtDur(total)} integration · ${fmtBytes(cur.frames.reduce((a, f) => a + (f.bytes || frameBytes(f)), 0))}`,
+        sel.size ? h('button', { class: 'btn tiny danger', onclick: () => delSelected(sel) }, `Delete selected (${sel.size})`) : h('span', { class: 'tiny muted' }, '⌘/Shift-click to select several · Delete key removes'),
+        sel.size ? h('button', { class: 'btn tiny', onclick: () => { sel.clear(); renderGrid(); } }, 'Clear selection') : null,
+        h('button', { class: 'btn tiny danger', onclick: async () => { if (await confirmDlg('Delete frames', `Delete all ${cur.frames.length} frames in this folder?`, 'Delete')) { deleteFrames(cur.frames.map((f) => f.id)); cur = null; sel.clear(); renderTree(); renderGrid(); } } }, 'Delete folder')));
+      let lastIdx = null;
+      cur.frames.forEach((f, idx) => {
         const img = h('img', { class: 'thumb', alt: '' });
         idbGet('thumb:' + f.id).then((u) => { if (u) img.src = u; });
-        const del = h('button', { class: 'fcard-x', title: 'Delete this frame', onclick: (e) => { e.stopPropagation(); deleteFrames([f.id]); cur.frames = cur.frames.filter((x) => x.id !== f.id); renderTree(); renderGrid(); } }, '✕');
-        const card = h('div', { class: 'fcard', onclick: () => show(f) }, del, img, h('div', { class: 'small' }, `${f.type} · ${f.exp < 0.5 ? +(f.exp * 1000).toFixed(1) + 'ms' : f.exp + 's'} · ${f.type === 'video' ? (f.frames || '') + ' fr' : fname(f.filter)} · ${fmtBytes(f.bytes || frameBytes(f))}`), h('div', { class: 'tiny muted' }, `HFR ${f.stats.hfr} · ★${f.stats.stars}${f.stats.trail > 4 ? ' · trails' : ''}`));
+        const del = h('button', { class: 'fcard-x', title: 'Delete this frame', onclick: (e) => { e.stopPropagation(); delSelected([f.id]); } }, '✕');
+        const card = h('div', { class: 'fcard' + (sel.has(f.id) ? ' sel' : '') + (shown && shown.id === f.id ? ' on' : ''), onclick: (e) => {
+          if (e.metaKey || e.ctrlKey) { sel.has(f.id) ? sel.delete(f.id) : sel.add(f.id); lastIdx = idx; renderGrid(); return; }
+          if (e.shiftKey && (lastIdx !== null || shown)) { const a = lastIdx ?? cur.frames.findIndex((x) => x.id === shown.id); for (let i = Math.min(a, idx); i <= Math.max(a, idx); i++) sel.add(cur.frames[i].id); renderGrid(); return; }
+          sel.clear(); lastIdx = idx; show(f); renderGrid(); body.focus();
+        } }, del, img, h('div', { class: 'small' }, `${f.type} · ${f.exp < 0.5 ? +(f.exp * 1000).toFixed(1) + 'ms' : f.exp + 's'} · ${f.type === 'video' ? (f.frames || '') + ' fr' : fname(f.filter)} · ${fmtBytes(f.bytes || frameBytes(f))}`), h('div', { class: 'tiny muted' }, `HFR ${f.stats.hfr} · ★${f.stats.stars}${f.stats.trail > 4 ? ' · trails' : ''}`));
         grid.append(card);
-      }
+      });
     }
     async function show(f) {
+      shown = f; delBtn.style.display = '';
       const loc = LOC[f.loc];
       meta.textContent = [
         `SIMPLE  = T`, `IMAGETYP= '${f.type.toUpperCase()}'`, `OBJECT  = '${f.target}'`, `EXPTIME = ${f.exp}`, `${GEAR[f.cam].type === 'dslr' ? 'ISOSPEED' : 'GAIN    '}= ${f.gain}`, f.offset != null ? `OFFSET  = ${f.offset}` : '',
@@ -145,7 +174,9 @@ export const stackerApp = {
           h('b', {}, `🎞 ${v.target}`), h('div', { class: 'small muted' }, `${v.frames} frames · ${+(v.exp * 1000).toFixed(1)} ms · ${v.fps} fps · ${fmtTime(v.t0, LOC[v.loc].tz)}${v.bodies && v.bodies.length ? '' : ' · ⚠ no planet in view'}`)));
       }
       left.append(h('h3', { style: { marginTop: '14px' } }, 'Saved stacks'));
-      for (const s of [...G.s.stacks].reverse()) left.append(h('div', { class: 'st-group', onclick: () => openApp('pixellab', s.id) }, h('b', {}, s.target), h('div', { class: 'small muted' }, `${s.n} subs · ${fmtDur(s.integration)} · ${fname(s.filter)} · ${s.method}`)));
+      for (const s of [...G.s.stacks].reverse()) left.append(h('div', { class: 'st-group', onclick: () => openApp('pixellab', s.id) },
+        h('button', { class: 'fcard-x', title: 'Delete this stack', onclick: async (e) => { e.stopPropagation(); if (!(await confirmDlg('Delete stack', `Delete the ${s.target} stack (${fmtBytes(s.bytes || stackBytes(s))})? Your raw frames are kept.`, 'Delete'))) return; G.s.stacks = G.s.stacks.filter((x) => x.id !== s.id); idbDel('stack:' + s.id); save(); emit('storage'); renderLeft(); } }, '✕'),
+        h('b', {}, s.target), h('div', { class: 'small muted' }, `${s.n} subs · ${fmtDur(s.integration)} · ${fname(s.filter)} · ${s.method} · ${fmtBytes(s.bytes || stackBytes(s))}`)));
     }
     function calibCandidates(lights, type) {
       const L = lights[0];

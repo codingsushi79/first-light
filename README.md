@@ -68,6 +68,12 @@ PixelLab's **wavelets** bring the detail out. Low planets suffer atmospheric dis
 or *RGB align*.
 
 ## Also new in 0.2
+- **Real gear**: ~100 products from ZWO, Sky-Watcher, Celestron, Canon, Nikon, Sony, Samyang, Sigma, William Optics,
+  Askar, Takahashi, iOptron, Rainbow Astro, Optolong, Antlia, QHY, Player One… AstroMart groups them by brand or type.
+- **Meteor showers**: the real annual showers (Perseids, Geminids, Orionids…) with radiants and peak dates, plus sporadics —
+  streaks across the 3D sky and, if you're lucky, across your frames.
+- **Live stacking (EAA)** in AstroCap → Imaging: frames are aligned and averaged as you shoot.
+- Delete individual frames (or multi-select with ⌘/Shift-click), stacks and published images.
 - **Auroras** at high geomagnetic latitudes (nightly Kp index, storms), in the sky and in photos.
 - **Sound**: wind, crickets, distant traffic, owls, shutters, mount motors, footsteps.
 - **Logbook**: Messier checklist, planets, achievements (cash rewards in career), records.

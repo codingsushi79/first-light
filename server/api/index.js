@@ -81,7 +81,7 @@ async function route(req, res, path) {
     const rows = await sql`insert into posts (player_id, title, target, image, thumb, score, meta) values (${me.id}, ${clean(body.title, 80) || 'Untitled'}, ${clean(body.target, 60)}, ${image}, ${thumb}, ${Math.max(0, Math.min(100, +body.score || 0))}, ${meta}) returning id, created`;
     return { id: rows[0].id, created: rows[0].created };
   }
-  if ((m = /^\/posts\/([0-9a-f-]{36})(?:\/(like|comment|print|report))?$/.exec(path))) {
+  if ((m = /^\/posts\/([0-9a-f-]{36})(?:\/(like|comment|print|report|delete))?$/.exec(path))) {
     const id = m[1], action = m[2];
     if (method === 'GET' && !action) {
       let me = null; try { me = req.headers.authorization ? await auth(req) : null; } catch { me = null; }
@@ -127,6 +127,11 @@ async function route(req, res, path) {
       await sql`update posts set prints = prints + 1 where id = ${id}`;
       await sql`insert into ledger (player_id, amount, reason) values (${author}, ${Math.round(price * 0.6)}, ${size + ' print of “' + post[0].title + '” sold'})`;
       return { ok: true, price };
+    }
+    if (action === 'delete') {
+      if (author !== me.id) bad('Only the author can delete a post', 403);
+      await sql`delete from posts where id = ${id}`;
+      return { ok: true };
     }
     if (action === 'report') {
       const ins = await sql`insert into reports (post_id, player_id) values (${id}, ${me.id}) on conflict do nothing returning post_id`;

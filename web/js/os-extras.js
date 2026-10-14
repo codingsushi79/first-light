@@ -5,6 +5,7 @@ import { G, save, fmtTime } from './state.js';
 import { findLocal, TYPE_LABEL } from './catalog.js';
 import { LOC } from './gear.js';
 import * as S from './session.js';
+import { activeShowers, SHOWERS } from './meteors.js';
 
 // ---------------------------------------------------------------- Spotlight
 let spot = null;
@@ -83,7 +84,12 @@ function render() {
   const L = A.lst(s.time, loc.lon);
   const up = ['Venus', 'Mars', 'Jupiter', 'Saturn'].map((nm) => ({ nm, alt: A.radec2altaz(S.bodyInfo(nm).ra, S.bodyInfo(nm).dec, L, loc.lat).alt })).filter((x) => x.alt > 5);
   const w2 = h('div', { class: 'nc-w' }, h('div', { class: 'nc-wt' }, 'Planets up'), up.length ? h('div', { class: 'nc-chips' }, ...up.map((x) => h('span', { class: 'nc-chip', onclick: () => openApp('planetarium', { id: x.nm, name: x.nm, ...S.bodyInfo(x.nm), body: x.nm }) }, `${x.nm} ${x.alt.toFixed(0)}°`))) : h('div', { class: 'small muted' }, 'None above the horizon right now.'));
-  nc.append(h('div', { class: 'nc-head' }, h('b', {}, 'Notifications'), h('button', { class: 'nc-clear', onclick: () => { NOTES.length = 0; render(); } }, 'Clear')), w1, w2);
+  const sh = activeShowers(s.time)[0];
+  const next = SHOWERS.map(([name, mo, d, zhr]) => { const y = new Date(s.time).getUTCFullYear(); let t = Date.UTC(y, mo - 1, d); if (t < s.time - 86400000) t = Date.UTC(y + 1, mo - 1, d); return { name, t, zhr }; }).sort((a, b) => a.t - b.t)[0];
+  const w3 = h('div', { class: 'nc-w' }, h('div', { class: 'nc-wt' }, 'Meteors'),
+    sh ? h('div', { class: 'small' }, `${sh.name}: ~${Math.round(sh.zhr)}/h now (peak ZHR ${sh.peakZhr}${Math.abs(sh.daysToPeak) > 0.5 ? `, ${sh.daysToPeak > 0 ? 'in ' + Math.round(sh.daysToPeak) + ' d' : Math.round(-sh.daysToPeak) + ' d ago'}` : ' — tonight!'})`) : h('div', { class: 'small muted' }, 'Only sporadic meteors (~8/h) right now.'),
+    h('div', { class: 'small muted' }, `Next peak: ${next.name}, ${new Date(next.t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} (ZHR ${next.zhr})`));
+  nc.append(h('div', { class: 'nc-head' }, h('b', {}, 'Notifications'), h('button', { class: 'nc-clear', onclick: () => { NOTES.length = 0; render(); } }, 'Clear')), w1, w2, w3);
   if (!NOTES.length) nc.append(h('div', { class: 'nc-empty' }, 'No notifications'));
   const tz = loc.tz;
   for (const n of NOTES.slice(0, 40)) nc.append(h('div', { class: 'nc-n ' + n.kind }, h('div', { class: 'nc-n-t' }, n.msg), h('div', { class: 'nc-n-at' }, ago(n.at))));

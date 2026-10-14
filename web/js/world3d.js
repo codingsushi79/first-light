@@ -7,6 +7,7 @@ import { cat, bvToRGB } from './catalog.js';
 import { GEAR, horizonAlt, rigInfo } from './gear.js';
 import { G, on, off } from './state.js';
 import * as S from './session.js';
+import * as MET from './meteors.js';
 import { makeNoise, mulberry32, hashStr } from './util.js';
 
 const SKY_R = 900;
@@ -424,10 +425,10 @@ export class World {
       frontZ = len + 0.04;
     } else {
       const D = opt.D / 1000; const flen = ri.focal / 1000;
-      const tubeMat = opt.type === 'refractor' ? white : opt.type === 'sct' || opt.type === 'rasa' ? new THREE.MeshStandardMaterial({ color: 0x1c2a4a, metalness: 0.5, roughness: 0.4 }) : opt.type === 'rc' ? black : white;
+      const tubeMat = opt.type === 'refractor' ? white : opt.type === 'sct' || opt.type === 'rasa' || opt.type === 'mak' ? new THREE.MeshStandardMaterial({ color: 0x1c2a4a, metalness: 0.5, roughness: 0.4 }) : opt.type === 'rc' ? black : white;
       if (opt.type === 'refractor') { len = flen * 0.8; rad = D / 2 + 0.012; }
       else if (opt.type === 'newtonian') { len = flen * 1.02; rad = D / 2 + 0.02; }
-      else if (opt.type === 'sct' || opt.type === 'rasa') { len = D * 2.1; rad = D / 2 + 0.015; }
+      else if (opt.type === 'sct' || opt.type === 'rasa' || opt.type === 'mak') { len = D * (opt.type === 'mak' ? 2.6 : 2.1); rad = D / 2 + 0.015; }
       else { len = flen * 0.33; rad = D / 2 + 0.02; }
       const tube = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, len, 40, 1, opt.type === 'newtonian'), tubeMat); tube.rotation.x = Math.PI / 2; tube.position.z = len / 2 + 0.06; ota.add(tag(tube, 'scope'));
       if (opt.type === 'refractor') { const shield = new THREE.Mesh(new THREE.CylinderGeometry(rad * 1.06, rad * 1.06, D * 1.6, 40, 1, true), tubeMat); shield.rotation.x = Math.PI / 2; shield.position.z = len + 0.06 + D * 0.5; ota.add(tag(shield, 'scope')); }
@@ -697,6 +698,7 @@ export class World {
       names.forEach((nm, i) => { const b = S.bodyInfo(nm); const v = eqVec(b.ra, b.dec).multiplyScalar(SKY_R - 5); g.attributes.position.setXYZ(i, v.x, v.y, v.z); g.attributes.color.setXYZ(i, ...b.col); g.attributes.mag.setX(i, b.mag); });
       g.attributes.position.needsUpdate = g.attributes.color.needsUpdate = g.attributes.mag.needsUpdate = true;
     }
+    this.updateMeteors(lim);
     if (this.starMat) { this.starMat.uniforms.limMag.value = lim; this.starMat.uniforms.time.value = t; this.starMat.uniforms.seeing.value = env.seeing; }
     this.mwMat.uniforms.strength.value = THREE.MathUtils.clamp((lim - 4.2) / 2.2, 0, 1) * 1.6 * (1 - env.clouds);
     // moon & sun
@@ -728,6 +730,36 @@ export class World {
     if (prev !== this.hover) this.emit('hover', this.hover);
     this.renderer.render(this.scene, this.camera);
     if (this.onView) try { this.onView(this); } catch (e) { console.warn(e); }
+  }
+  // meteors: new events since the last frame flash across the sky for ~1 s of real time
+  updateMeteors(lim) {
+    const MAX = 16;
+    if (!this.metLines) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX * 2 * 3), 3));
+      g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(MAX * 2 * 3), 3));
+      this.metLines = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+      this.metLines.frustumCulled = false; this.metLines.renderOrder = -5; this.celestial.add(this.metLines);
+      this.metShow = []; this.metLast = G.s.time;
+    }
+    const now = performance.now() / 1000;
+    if (G.s.time < this.metLast || G.s.time - this.metLast > 3600e3) this.metLast = G.s.time;
+    for (const e of MET.between(this.metLast + 1, G.s.time)) if (e.t > this.metLast && e.mag < lim + 0.5 && this.metShow.length < MAX) this.metShow.push({ e, t0: now + Math.random() * 0.15 });
+    this.metLast = G.s.time;
+    this.metShow = this.metShow.filter((m) => now - m.t0 < 1.1);
+    const pos = this.metLines.geometry.attributes.position, col = this.metLines.geometry.attributes.color;
+    for (let i = 0; i < MAX; i++) {
+      const m = this.metShow[i];
+      if (!m || now < m.t0) { pos.setXYZ(i * 2, 0, 0, 0); pos.setXYZ(i * 2 + 1, 0, 0, 0); col.setXYZ(i * 2, 0, 0, 0); col.setXYZ(i * 2 + 1, 0, 0, 0); continue; }
+      const f = (now - m.t0) / 1.1, head = Math.min(1, f * 1.8), tail = Math.max(0, head - 0.45);
+      const a = eqVec(m.e.ra, m.e.dec), b = eqVec(m.e.ra2, m.e.dec2);
+      const P = (u) => a.clone().lerp(b, u).normalize().multiplyScalar(SKY_R - 8);
+      const ph = P(head), pt = P(tail);
+      const br = Math.min(2.2, Math.pow(10, -0.4 * (m.e.mag - lim)) * 0.35) * (1 - Math.max(0, f - 0.55) / 0.45);
+      pos.setXYZ(i * 2, pt.x, pt.y, pt.z); pos.setXYZ(i * 2 + 1, ph.x, ph.y, ph.z);
+      col.setXYZ(i * 2, 0, 0, 0); col.setXYZ(i * 2 + 1, m.e.col[0] * br, m.e.col[1] * br, m.e.col[2] * br);
+    }
+    pos.needsUpdate = col.needsUpdate = true;
   }
   // screen position of a sky direction (for HUD markers); null when behind the camera
   projectAltAz(alt, az) {
