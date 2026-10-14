@@ -1,23 +1,41 @@
 // Main-thread interface to the imaging worker.
-let worker = null, seq = 0;
+let worker = null, seq = 0, initArgs = null;
 const pending = new Map();
+// Generous per-command time limits: a stuck request must never freeze the game clock.
+const LIMIT = { render: 120e3, view: 120e3, framing: 60e3, status: 10e3, init: 30e3, stack: 10 * 60e3 };
 
-export function initWorker(stars) {
+function spawn() {
   worker = new Worker(new URL('./render-worker.js', import.meta.url), { type: 'module' });
   worker.onmessage = (e) => {
     const { id, ok, res, err, progress, msg, f } = e.data;
     const p = pending.get(id); if (!p) return;
-    if (progress) { p.onProgress && p.onProgress(msg, f); return; }
-    pending.delete(id);
+    if (progress) { p.onProgress && p.onProgress(msg, f); p.arm(); return; }
+    pending.delete(id); clearTimeout(p.timer);
     ok ? p.resolve(res) : p.reject(new Error(err));
   };
-  worker.onerror = (e) => console.error('worker error', e);
-  return call('init', { stars: stars.map((s) => ({ ra: s.ra, dec: s.dec, mag: s.mag, c: s.c })), budget: 260e6 });
+  // A crashed worker (e.g. out of memory) fails everything in flight and is restarted.
+  worker.onerror = (e) => { console.error('imaging worker crashed', e); restart('The imaging engine crashed and was restarted'); };
+}
+function restart(reason) {
+  try { worker && worker.terminate(); } catch { /* ignore */ }
+  for (const [, p] of pending) { clearTimeout(p.timer); p.reject(new Error(reason)); }
+  pending.clear();
+  spawn();
+  if (initArgs) worker.postMessage({ id: ++seq, cmd: 'init', args: initArgs });
+}
+export function initWorker(stars) {
+  initArgs = { stars: stars.map((s) => ({ ra: s.ra, dec: s.dec, mag: s.mag, c: s.c })), budget: 260e6 };
+  spawn();
+  return call('init', initArgs);
 }
 export function call(cmd, args, onProgress, transfer = []) {
   const id = ++seq;
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject, onProgress });
+    const limit = LIMIT[cmd] || 120e3;
+    const p = { resolve, reject, onProgress, timer: null };
+    // (stacking re-arms the timer on every progress message, so long stacks are fine)
+    p.arm = () => { clearTimeout(p.timer); p.timer = setTimeout(() => { if (pending.has(id)) restart(`The imaging engine stopped responding (${cmd}) and was restarted`); }, limit); };
+    pending.set(id, p); p.arm();
     worker.postMessage({ id, cmd, args }, transfer);
   });
 }

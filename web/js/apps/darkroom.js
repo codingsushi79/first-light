@@ -383,3 +383,102 @@ export function process(w, P) {
   return { rgba, hist };
 }
 void cat; void promptDlg; void select;
+
+// =====================================================================
+// Headless versions of DeepStack / PixelLab, used by scripts
+// =====================================================================
+function resampleStack(refMeta, s) {
+  if (s.meta.id === refMeta.id) return s.data[0];
+  const W = refMeta.W, H = refMeta.H; const out = new Float32Array(W * H);
+  const pr = refMeta.ref, pf = s.meta.ref; const sc = refMeta.scale / s.meta.scale;
+  const p = A.tanProject(pr.ra, pr.dec, pf.ra, pf.dec);
+  const dxi = p.xi * A.R2D * 3600 / refMeta.scale, deta = p.eta * A.R2D * 3600 / refMeta.scale;
+  const thR = pr.rot * A.D2R, thF = pf.rot * A.D2R; const a = s.data[0]; const SW = s.meta.W, SH = s.meta.H;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const u = x + 0.5 - W / 2, v = y + 0.5 - H / 2;
+    const bx = u * Math.cos(thR) + v * Math.sin(thR) + dxi, by = -u * Math.sin(thR) + v * Math.cos(thR) + deta;
+    const fu = (bx * Math.cos(thF) - by * Math.sin(thF)) * sc + SW / 2 - 0.5, fv = (bx * Math.sin(thF) + by * Math.cos(thF)) * sc + SH / 2 - 0.5;
+    const x0 = Math.floor(fu), y0 = Math.floor(fv); if (x0 < 0 || y0 < 0 || x0 >= SW - 1 || y0 >= SH - 1) continue;
+    const fx = fu - x0, fy = fv - y0, i = y0 * SW + x0;
+    out[y * W + x] = a[i] * (1 - fx) * (1 - fy) + a[i + 1] * fx * (1 - fy) + a[i + SW] * (1 - fx) * fy + a[i + SW + 1] * fx * fy;
+  }
+  return out;
+}
+
+// Stack the newest light frames of `target` (optionally one filter) with matching calibration frames.
+export async function autoStack({ target, filter = null, method = 'kappa', minScore = 40, onProgress = () => {} }) {
+  const key = (s) => String(s || '').toLowerCase();
+  let lights = G.s.frames.filter((f) => f.type === 'light' && key(f.target) === key(target) && (filter === null || (f.filter || null) === filter));
+  if (!lights.length) throw new Error(`No light frames of “${target}”${filter ? ' with filter ' + fname(filter) : ''}.`);
+  // keep the newest rig/resolution group
+  const last = lights[lights.length - 1];
+  lights = lights.filter((f) => f.cam === last.cam && f.optic === last.optic && f.focal === last.focal && f.quality === last.quality && (f.filter || null) === (last.filter || null));
+  const maxStars = Math.max(1, ...lights.map((f) => f.stats.stars));
+  const minHfr = Math.min(...lights.map((f) => f.stats.hfr || 99));
+  const scoreOf = (f) => Math.round(100 * (f.stats.stars / maxStars) * Math.min(1, minHfr / Math.max(0.1, f.stats.hfr)) * (1 - Math.max(0, f.stats.ecc - 0.4)));
+  let sel = lights.filter((f) => scoreOf(f) >= minScore); if (sel.length < Math.min(3, lights.length)) sel = lights.slice();
+  sel.sort((a, b) => scoreOf(b) - scoreOf(a));
+  const L = sel[0];
+  const pool = (type) => G.s.frames.filter((f) => f.type === type && f.cam === L.cam && f.quality === L.quality);
+  const darks = pool('dark'), flats = pool('flat'), biases = pool('bias');
+  const matchDark = darks.filter((d) => Math.abs(d.exp - L.exp) < 0.5 && d.gain === L.gain && Math.abs(d.temp - L.temp) < 3 && (d.bin || 1) === (L.bin || 1));
+  const darkSel = matchDark.length ? matchDark : darks.filter((d) => Math.abs(d.exp - L.exp) < 0.5 && d.gain === L.gain);
+  const flatSel = flats.filter((f) => f.optic === L.optic && (f.filter || '') === (L.filter || '') && Math.abs(f.focal - L.focal) < 2);
+  const job = { lights: sel.map((f) => f.recipe), darks: darkSel.slice(-40).map((f) => f.recipe), flats: flatSel.slice(-40).map((f) => f.recipe), biases: biases.slice(-40).map((f) => f.recipe), method, kappa: 2.5 };
+  const res = await stackJob(job, onProgress);
+  const id = uid(); const integ = sel.reduce((a, f) => a + f.exp, 0);
+  const meta = { id, target: L.target || 'Untitled', n: sel.length, integration: integ, filter: L.filter, cam: L.cam, optic: L.optic, focal: L.focal, W: res.W, H: res.H, nc: res.nc, method, ref: res.refPointing, scale: res.scale, created: G.s.time, darks: job.darks.length, flats: job.flats.length,
+    quality: { hfr: avg(sel.map((f) => f.stats.hfr)), ecc: avg(sel.map((f) => f.stats.ecc)), trail: avg(sel.map((f) => f.stats.trail || 0)) }, loc: L.loc, sessions: [...new Set(sel.map((f) => f.session))].length };
+  await idbSet('stack:' + id, { data: res.data, coverage: res.coverage });
+  G.s.stacks.push(meta);
+  while (G.s.stacks.length > 14) { const old = G.s.stacks.shift(); idbDel('stack:' + old.id); }
+  save(true); emit('stacked', meta);
+  return meta;
+}
+
+// Combine + process the newest stacks of `target` and save a final image. Returns the final's id.
+// preset: 'auto' | 'color' | 'mono' | 'LRGB' | 'RGB' | 'HOO' | 'SHO'
+export async function autoProcess({ target, preset = 'auto', title, params = {} }) {
+  const key = (s) => String(s || '').toLowerCase();
+  const mine = G.s.stacks.filter((s) => key(s.target) === key(target));
+  if (!mine.length) throw new Error(`No stacks of “${target}” — run stack first.`);
+  const newest = (f) => [...mine].reverse().find((s) => (s.filter || null) === f);
+  const color = [...mine].reverse().find((s) => s.nc === 3);
+  if (preset === 'auto') preset = color ? 'color' : newest('f_R') && newest('f_G') && newest('f_B') ? (newest('f_L') ? 'LRGB' : 'RGB') : newest('f_ha') && newest('f_oiii') ? (newest('f_sii') ? 'SHO' : 'HOO') : 'mono';
+  const load = async (m) => ({ meta: m, data: (await idbGet('stack:' + m.id)).data });
+  let ref, r, g, b, L = null, used = [];
+  if (preset === 'color') { if (!color) throw new Error('No color stack.'); const s = await load(color); ref = color; used = [color]; [r, g, b] = s.data; }
+  else {
+    const pick = { LRGB: ['f_R', 'f_G', 'f_B', 'f_L'], RGB: ['f_R', 'f_G', 'f_B', null], HOO: ['f_ha', 'f_oiii', 'f_oiii', null], SHO: ['f_sii', 'f_ha', 'f_oiii', null] }[preset];
+    if (pick) {
+      const ms = pick.map((f) => (f ? newest(f) : null));
+      if (ms.slice(0, 3).some((m) => !m)) throw new Error(`${preset} needs stacks for ${pick.filter(Boolean).map(fname).join(', ')}.`);
+      ref = ms[3] || ms[0]; used = [...new Set(ms.filter(Boolean))];
+      const get = async (m) => resampleStack(ref, await load(m));
+      r = await get(ms[0]); g = await get(ms[1]); b = await get(ms[2]); if (ms[3]) L = await get(ms[3]);
+    } else { ref = [...mine].reverse()[0]; used = [ref]; const s = await load(ref); r = g = b = s.data[0]; }
+  }
+  const W = ref.W, H = ref.H;
+  if (L) { const nr = new Float32Array(W * H), ng = new Float32Array(W * H), nb = new Float32Array(W * H); for (let i = 0; i < W * H; i++) { const y = (r[i] + g[i] + b[i]) / 3 + 1e-6; const k = L[i] / y; nr[i] = r[i] * k; ng[i] = g[i] * k; nb[i] = b[i] * k; } r = nr; g = ng; b = nb; }
+  const P = { crop: 0.03, be: true, beStr: 1, neutral: true, wb: [1, 1, 1], contrast: 0.15, sat: 0.4, nr: 0.3, sharp: 0.2, starRed: 0, midScale: 1, ...params };
+  const cx = Math.round(W * P.crop), cy = Math.round(H * P.crop), CW = W - 2 * cx, CH = H - 2 * cy;
+  const crop = (a) => { const o = new Float32Array(CW * CH); for (let y = 0; y < CH; y++) o.set(a.subarray((y + cy) * W + cx, (y + cy) * W + cx + CW), y * CW); return o; };
+  const work = { W: CW, H: CH, r: crop(r), g: crop(g), b: crop(b) };
+  if (P.be) for (const k of ['r', 'g', 'b']) subtractBackground(work[k], CW, CH, P.beStr);
+  if (P.neutral) neutralize(work);
+  // auto stretch, then optional midtone scaling (midScale < 1 = gentler stretch to protect bright cores)
+  const Ls = lum(work); const s = sample(Ls); const med = s[s.length >> 1]; const mad = s.map((v) => Math.abs(v - med)).sort((x, y) => x - y)[s.length >> 1] * 1.4826;
+  P.black = Math.max(0, med - 2.5 * mad); const hi = s[Math.floor(s.length * 0.9995)] || 1; P.white = Math.max(P.black + 1e-4, Math.min(1, hi * 1.05));
+  const mN = (med - P.black) / (P.white - P.black); const T = 0.2; P.mid = mN <= 0 ? 0.5 : ((T - 1) * mN) / ((2 * T - 1) * mN - T);
+  P.mid = Math.max(0.0005, Math.min(0.5, P.mid * P.midScale));
+  const out = process(work, P);
+  const c = document.createElement('canvas'); c.width = CW; c.height = CH; c.getContext('2d').putImageData(new ImageData(out.rgba, CW, CH), 0, 0);
+  const sc = scoreImage(out, work, ref, P);
+  const id = uid();
+  const thumbC = document.createElement('canvas'); thumbC.width = 360; thumbC.height = Math.round(360 * CH / CW); thumbC.getContext('2d').drawImage(c, 0, 0, thumbC.width, thumbC.height);
+  await idbSet('final:' + id, c.toDataURL('image/jpeg', 0.9)); await idbSet('finalthumb:' + id, thumbC.toDataURL('image/jpeg', 0.85));
+  const integration = used.reduce((a, m) => a + m.integration, 0);
+  G.s.finals.push({ id, title: title || target, target, created: G.s.time, stack: ref.id, integration, n: ref.n, cam: ref.cam, optic: ref.optic, focal: ref.focal, filter: [preset], score: sc, posted: false, loc: ref.loc });
+  save(true); emit('final', id);
+  return id;
+}

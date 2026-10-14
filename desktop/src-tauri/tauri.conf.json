@@ -29,10 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "app",
-      "nsis"
-    ],
+    "targets": "all",
     "category": "Game",
     "shortDescription": "Astrophotography simulator",
     "icon": [

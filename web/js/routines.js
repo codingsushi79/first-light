@@ -85,34 +85,59 @@ export async function autofocus(onPoint = () => {}, log = () => {}) {
   const fr = ri.focal / ri.D;
   const cfz = 4.88 * 0.55 * fr * fr; // critical focus zone (µm)
   const um = ri.opt.focusUmPerStep || 4;
-  const step = cs.afStep || Math.max(5, Math.round((cfz * 2.2) / um));
+  const baseStep = cs.afStep || Math.max(5, Math.round((cfz * 2.2) / um));
   const pts = cs.afPoints || 9;
+  // Like real focus software: measure stars on a full-resolution crop from the middle of the sensor.
+  const bin = cs.bin || 1;
+  const roi = { cx: Math.floor(ri.cam.w / bin / 2), cy: Math.floor(ri.cam.h / bin / 2), w: Math.min(640, Math.floor(ri.cam.w / bin)), h: Math.min(480, Math.floor(ri.cam.h / bin)) };
   const start = n.focus.pos;
   R.afCurve = [];
-  log(`Autofocus: ${pts} points, step ${step}, starting at ${start}`);
-  const positions = []; for (let i = 0; i < pts; i++) positions.push(Math.round(start + (i - (pts - 1) / 2) * step));
-  // backlash compensation: overshoot outward then come in
-  for (const pos of positions) {
+  const measure = async (pos) => {
     if (R.abort) throw new Error('Aborted');
-    const dt = Math.abs(pos - n.focus.pos) / 800 + 0.5;
-    S.setFocus(pos); await S.waitSim(dt);
-    const f = await S.expose({ type: 'light', exp: cs.afExp, gain: cs.gain, offset: cs.offset, bin: 1, save: false, target: 'autofocus' });
-    const hfr = f.meta.stats.hfr, stars = f.meta.stats.stars;
-    const p = { pos, hfr, stars }; R.afCurve.push(p); onPoint(p);
-    log(`  pos ${pos}: HFR ${hfr.toFixed(2)} (${stars} stars)`);
+    pos = Math.max(0, Math.min(10000, Math.round(pos)));
+    await S.setFocus(pos); await S.waitSim(Math.abs(pos - n.focus.pos) / 800 + 0.5);
+    const f = await S.expose({ type: 'light', exp: cs.afExp, gain: cs.gain, offset: cs.offset, bin, roi, save: false, target: 'autofocus' });
+    const st = f.res.stats;
+    // focus metric: ~ star width from peak brightness (robust far from focus); HFR shown for reference
+    const m = 100 / Math.sqrt(Math.max(st.peak || 0, st.mad * 0.5, 1e-3));
+    const p = { pos, hfr: m, rawHfr: st.hfr, stars: st.stars, snr: (st.peak || 0) / Math.max(1e-3, st.mad) };
+    R.afCurve.push(p); onPoint(p); log(`  pos ${pos}: width ${m.toFixed(2)} · HFR ${st.hfr.toFixed(2)} · peak S/N ${p.snr.toFixed(0)}`);
+    return p;
+  };
+  let center = start, step = baseStep, fit = null, best = start;
+  log(`Autofocus: ${pts} points, step ${step}, starting at ${start}`);
+  for (let pass = 0; pass < 6; pass++) {
+    const pass0 = R.afCurve.length;
+    for (let i = 0; i < pts; i++) await measure(center + (i - (pts - 1) / 2) * step);
+    const curve = R.afCurve.slice(pass0);
+    const good = curve.filter((p) => p.snr >= 8);
+    if (good.length < 5) {
+      // too defocused to see stars: widen the search and move toward wherever stars appear
+      const most = curve.reduce((a, b) => (b.snr > a.snr ? b : a));
+      center = most.snr > 3 ? most.pos : center + (pass % 2 ? -1 : 1) * pts * step;
+      step = Math.min(400, step * 3);
+      log(`  Too few stars — widening the search (step ${step}) around ${Math.round(center)}`);
+      continue;
+    }
+    const minP = good.reduce((a, b) => (b.hfr < a.hfr ? b : a));
+    const lo = Math.min(...curve.map((p) => p.pos)), hi = Math.max(...curve.map((p) => p.pos));
+    if (minP.pos <= lo + step * 0.5 || minP.pos >= hi - step * 0.5) {
+      center = minP.pos + (minP.pos <= lo + step * 0.5 ? -1 : 1) * (pts - 1) / 2 * step; // best is at an edge: slide the window
+      log(`  Minimum at the edge — moving the window to ${Math.round(center)}`);
+      continue;
+    }
+    if (step > baseStep) { center = minP.pos; step = Math.max(baseStep, Math.round(step / 3)); log(`  Refining around ${center} (step ${step})`); continue; }
+    fit = fitParabola(good.map((p) => [p.pos, p.hfr]));
+    best = fit && fit.a > 0 ? -fit.b / (2 * fit.a) : minP.pos;
+    if (best < lo || best > hi) best = minP.pos;
+    await S.setFocus(Math.round(best)); await S.waitSim(1);
+    log(`Autofocus complete → position ${Math.round(best)}`);
+    R.afFit = fit; R.afBest = Math.round(best); R.afTemp = S.envAt(G.s.time).temp;
+    emit('autofocus', { curve: R.afCurve, fit, best });
+    return best;
   }
-  // fit parabola to points with enough stars
-  const good = R.afCurve.filter((p) => p.stars >= 8 && p.hfr > 0);
-  if (good.length < 5) { S.setFocus(start); throw new Error('Autofocus failed: not enough stars. Is it cloudy or way out of focus?'); }
-  const fit = fitParabola(good.map((p) => [p.pos, p.hfr]));
-  let best = fit && fit.a > 0 ? -fit.b / (2 * fit.a) : good.reduce((a, b) => (b.hfr < a.hfr ? b : a)).pos;
-  const lo = Math.min(...positions), hi = Math.max(...positions);
-  if (best < lo || best > hi) { log('Minimum is outside the sampled range — re-run autofocus from the new position.'); best = Math.max(lo, Math.min(hi, best)); }
-  S.setFocus(Math.round(best)); await S.waitSim(1);
-  log(`Autofocus complete → position ${Math.round(best)}`);
-  R.afFit = fit; R.afBest = Math.round(best); R.afTemp = S.envAt(G.s.time).temp;
-  emit('autofocus', { curve: R.afCurve, fit, best });
-  return best;
+  await S.setFocus(start);
+  throw new Error('Autofocus failed: could not find focus (clouds, or the focuser far from focus?). Focus roughly by hand and try again.');
 }
 function fitParabola(pts) {
   // least squares y = a x^2 + b x + c
@@ -189,7 +214,7 @@ export async function runSequence(seq, log = () => {}) {
     const fmode = seq.opts.focusMode || (seq.opts.afStart === false ? 'lock' : 'temp');
     const canAF = ri.hasAF && n.connected.focuser;
     if (fmode === 'lock') log(`Focus locked at ${Math.round(n.focus.pos)} for the whole sequence.`);
-    if (lightsLeft && fmode !== 'lock' && canAF) { set('Autofocus…'); await autofocus(() => {}, log); }
+    if (lightsLeft && fmode !== 'lock' && canAF && !seq.opts.skipInitialAF) { set('Autofocus…'); await autofocus(() => {}, log); }
     const compBase = { pos: n.focus.pos, best: S.focusBest() };
     if (lightsLeft && seq.opts.guide && ri.hasGuide && n.connected.guider && !n.guider.guiding) {
       if (!n.guider.calibrated) { set('Calibrating guider…'); await S.waitSim(60); await S.calibrateGuider(); }

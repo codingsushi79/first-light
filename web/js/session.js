@@ -63,7 +63,8 @@ function fmtLocal(ms) { if (!ms) return '—'; const p = localParts(ms, locNow()
 function initialFocus(ri, r) {
   if (!ri.opt) return { pos: 0, best0: 0, unit: 'deg' };
   if (ri.isLens) return { pos: 270, best0: 259 + r() * 6, unit: 'deg', min: 0, max: 270 };
-  return { pos: Math.round(5000 + (r() - 0.5) * 2400), best0: 5000 + (r() - 0.5) * 600, unit: 'steps', min: 0, max: 10000 };
+  const best0 = 5000 + (r() - 0.5) * 600;
+  return { pos: Math.round(best0 + (r() - 0.5) * 500), best0, unit: 'steps', min: 0, max: 10000 }; // drawtube roughly where you left it
 }
 
 function _endNight(reason = '') {
@@ -505,7 +506,7 @@ function _expose(params) {
 }
 function _abortExposure() {
   if (!T.exposure) return;
-  const ex = T.exposure; T.exposure = null;
+  const ex = T.exposure; T.exposure = null; T.busy = false;
   ex.reject(new Error('Exposure aborted'));
   emit('exposure', null);
 }
@@ -524,8 +525,9 @@ async function finishExposure() {
   }
   try {
     const res = await renderRecipe(r, { thumb: !!r.id, linked: G.s.settings.linked });
-    if (T.exposure !== ex) return; // aborted meanwhile
-    T.exposure = null; T.busy = false;
+    T.busy = false; // always release the clock, even if the exposure was aborted meanwhile
+    if (T.exposure !== ex || !night()) return; // aborted / night ended meanwhile
+    T.exposure = null;
     const meta = {
       id: r.id, session: night().id, type: r.type, target: r.target, label: r.label, exp: r.exp, gain: r.gain, offset: r.offset, bin: r.bin,
       filter: r.filter ? r.filter.id : null, temp: +r.sensorTemp.toFixed(1), t0: r.t0, loc: G.s.location,
@@ -545,8 +547,11 @@ async function finishExposure() {
     ex.resolve(T.lastFrame);
   } catch (e) {
     console.error(e);
-    T.exposure = null; T.busy = false;
+    if (T.exposure === ex) T.exposure = null;
     ex.reject(e);
+    emit('toast', { msg: 'Could not develop that frame: ' + (e.message || e), kind: 'bad' });
+  } finally {
+    T.busy = false;
   }
   emit('exposure', null);
 }

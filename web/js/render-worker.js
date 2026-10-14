@@ -26,7 +26,10 @@ async function fetchSurvey(ra, dec, fovDeg, N) {
   entry.ready = (async () => {
     let img;
     try {
-      const r = await fetch(url);
+      // Never wait forever on the survey server: time out and fall back to catalog stars.
+      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 30000);
+      let r;
+      try { r = await fetch(url, { signal: ctl.signal }); } finally { clearTimeout(to); }
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const bmp = await createImageBitmap(await r.blob());
       const c = new OffscreenCanvas(N, N); const g = c.getContext('2d');
@@ -647,7 +650,7 @@ function makeFlatField(r, W, H, g) {
 }
 
 // ---------- analysis ----------
-function analyze(fr) {
+function analyze(fr, R0 = 9) {
   const { W, H, nc, data } = fr;
   const N = W * H;
   // luminance-ish channel
@@ -659,6 +662,10 @@ function analyze(fr) {
   const devs = samp.map((v) => Math.abs(v - med)).sort((a, b) => a - b);
   const mad = devs[devs.length >> 1] * 1.4826 + 1e-6;
   const sat = samp.filter((v) => v >= fr.maxADU * 0.995).length / samp.length;
+  // Peak brightness of the brightest stars (99.95th percentile above background): falls steeply as
+  // stars defocus into wide disks, so it stays informative far from focus where HFR saturates.
+  let peak;
+  { const st = Math.max(1, Math.floor(N / 300000)); const arr = new Float32Array(Math.ceil(N / st)); let k = 0; for (let i = 0; i < N; i += st) arr[k++] = L[i]; arr.sort(); peak = Math.max(0, arr[Math.min(k - 1, Math.floor(k * 0.9995))] - med); }
   // star detection: local maxima above 6 sigma
   const thr = med + 6 * mad;
   const stars = [];
@@ -675,7 +682,7 @@ function analyze(fr) {
   const hfrs = []; const ecc = [];
   for (const s of stars) {
     if (s.v > fr.maxADU * 0.9) continue;
-    const R = 9;
+    const R = R0;
     let tot = 0, sx = 0, sy = 0;
     for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
       const xx = s.x + dx, yy = s.y + dy; if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
@@ -698,7 +705,7 @@ function analyze(fr) {
     if (hfrs.length >= 60) break;
   }
   const mid = (a) => { if (!a.length) return 0; const b = [...a].sort((p, q) => p - q); return b[b.length >> 1]; };
-  return { median: med, mad, saturated: sat, stars: stars.length, hfr: mid(hfrs), ecc: mid(ecc), bright: stars.slice(0, 40).map((s) => [s.x, s.y]) };
+  return { median: med, mad, peak, saturated: sat, stars: stars.length, hfr: mid(hfrs), ecc: mid(ecc), bright: stars.slice(0, 40).map((s) => [s.x, s.y]) };
 }
 
 // Auto screen-transfer-function stretch -> RGBA preview
@@ -941,7 +948,7 @@ self.onmessage = async (e) => {
     if (cmd === 'render') {
       const fr = await renderFrame(args.recipe, args.opts || {});
       if (args.recipe.id && !args.noCache) cachePut(args.recipe.id, fr);
-      const stats = analyze(fr);
+      const stats = analyze(fr, args.recipe.roi ? 24 : 9); // bigger star window on 1:1 focus crops
       const pv = preview(fr, { linked: args.linked });
       const thumb = args.thumb ? preview(fr, { maxW: 240, linked: args.linked }) : null;
       const hist = histogram(fr);

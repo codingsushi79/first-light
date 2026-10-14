@@ -87,6 +87,7 @@ function openPanel(section) {
 }
 function closePanel() { panelOpen = false; panel.style.display = 'none'; root.classList.remove('panel-open'); }
 
+const wrapPi = (a) => (Number.isFinite(a) ? ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI : 0);
 let sitting = false;
 function sitDown() {
   if (sitting) return; sitting = true;
@@ -98,7 +99,7 @@ function sitDown() {
   const from = { pos: P.pos.clone(), yaw: P.yaw, pitch: P.pitch };
   const toPos = scr.clone().add(new scr.constructor(0.15, 0, 0.5).applyAxisAngle(new scr.constructor(0, 1, 0), world.table.rotation.y)); toPos.y = 1.15;
   const d = scr.clone().sub(toPos); const toYaw = Math.atan2(-d.x, -d.z), toPitch = Math.atan2(d.y, Math.hypot(d.x, d.z));
-  let dy = toYaw - from.yaw; while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
+  const dy = wrapPi(toYaw - from.yaw);
   const t0 = performance.now(), dur = 900;
   const step = () => {
     const f = Math.min(1, (performance.now() - t0) / dur), e = f < 0.5 ? 2 * f * f : 1 - Math.pow(-2 * f + 2, 2) / 2;
@@ -232,7 +233,8 @@ function refreshLive() {
   if (live.rot && pt) live.rot.textContent = mount.type === 'eq' ? `Frame "up" points ${pt.pa.toFixed(1)}° east of north` : `Camera roll ${n.mount.roll.toFixed(1)}° from level (frame PA now ${pt.pa.toFixed(1)}°)`;
   if (live.focus) drawFocusRing(live.focus, n, ri);
   if (live.polar) drawPolarScope(live.polar, live.clock, n);
-  if (live.mirror && S.T.lastFrame) {
+  if (live.mirror && S.T.lastFrame && live.mirrorOf !== S.T.lastFrame) { // redraw only when a new frame arrives
+    live.mirrorOf = S.T.lastFrame;
     const pv = S.T.lastFrame.res.preview; const c = canvasFromRGBA(pv);
     live.mirror.width = 260; live.mirror.height = Math.round(260 * pv.h / pv.w);
     live.mirror.getContext('2d').drawImage(c, 0, 0, live.mirror.width, live.mirror.height);

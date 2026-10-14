@@ -154,3 +154,19 @@ body.hud-off .hud > :not(.hud-xhair):not(.hud-prompt):not(.hud-chat) { display: 
 .field-panel .fsec.flash { box-shadow: 0 0 0 1px var(--av-accent); }
 .field-panel .polarscope { border-radius: 50%; }
 .field-panel .mirror { border: 1px solid var(--av-rule-strong); border-radius: 0; }
+
+/* ---------------- tutorial coach ---------------- */
+.tut { position: fixed; left: 16px; top: 112px; width: 340px; z-index: 89000; background: rgb(6 8 10 / .92); border: 1px solid var(--av-rule-strong); padding: 14px 16px; font-size: 13.5px; box-shadow: 0 18px 50px rgb(0 0 0 / .5); }
+.tut-head { display: flex; justify-content: space-between; align-items: center; }
+.ui-av .tut-x { border: none; padding: 2px 0; font-size: 10.5px; color: var(--av-faint); }
+.ui-av .tut-x:hover:not(:disabled) { background: none; color: var(--av-text); }
+.tut-bar { height: 2px; background: rgb(255 255 255 / .1); margin: 8px 0 12px; }
+.tut-bar span { display: block; height: 100%; background: var(--av-accent); transition: width .4s; }
+.tut-title { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
+.tut-text { color: #c9d1da; line-height: 1.55; }
+.tut-text b { color: #fff; font-weight: 600; }
+.tut-count { color: var(--av-accent); font-family: var(--av-mono); }
+.tut-foot { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+.tut-wait { color: var(--av-accent); font-size: 10.5px; animation: pulse 1.6s infinite; }
+.dock-item.tut-pulse .dock-icon { animation: tutpulse 1.1s infinite; }
+@keyframes tutpulse { 0%, 100% { transform: translateY(0); filter: drop-shadow(0 0 0 rgba(143,211,255,0)); } 50% { transform: translateY(-8px); filter: drop-shadow(0 0 10px rgba(143,211,255,.9)); } }

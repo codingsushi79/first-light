@@ -1,0 +1,77 @@
+# Builds the desktop game for every platform and publishes a GitHub release
+# whenever a version tag (v*) is pushed:  git tag v0.2.0 && git push origin v0.2.0
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest      # Apple Silicon
+            args: --target aarch64-apple-darwin
+            rust_targets: aarch64-apple-darwin
+          - platform: macos-latest      # Intel Macs
+            args: --target x86_64-apple-darwin
+            rust_targets: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            args: ''
+            rust_targets: ''
+          - platform: windows-latest
+            args: ''
+            rust_targets: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - name: Linux system libraries
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Use the tag as the app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          node -e "const f='desktop/src-tauri/tauri.conf.json';const c=require('./'+f);c.version=process.env.GITHUB_REF_NAME.replace(/^v/,'');require('fs').writeFileSync(f,JSON.stringify(c,null,2))"
+
+      - name: Install JS dependencies
+        run: |
+          npm ci --prefix web
+          npm ci --prefix desktop
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: First Light ${{ github.ref_name }}
+          releaseBody: |
+            **Install** (macOS / Linux): `curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh`
+            **Install** (Windows PowerShell): `irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex`
+            Or download the file for your system below.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

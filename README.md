@@ -12,6 +12,52 @@ laptop running a full imaging OS (capture suite, planetarium, guiding, stacking,
 - **Anywhere on Earth.** The Atlas app shows NASA VIIRS night lights; pick any spot and its sky
   brightness is estimated from real satellite light data and the terrain from Blue Marble.
 
+## Install
+
+**macOS / Linux** — one line in Terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/codingsushi79/first-light/main/install.sh | sh
+```
+
+**Windows** — one line in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/codingsushi79/first-light/main/install.ps1 | iex
+```
+
+The script picks the right build for your machine (Apple Silicon or Intel Mac, x64 Linux AppImage,
+Windows installer) from the [latest release](https://github.com/codingsushi79/first-light/releases/latest).
+Or download it from the releases page yourself. Builds aren't code-signed yet; the macOS installer clears
+the download quarantine so the app opens normally.
+
+## First night
+A new career starts with an interactive tutorial that walks you through taking, editing and posting your
+first photo. Finish it (or skip it) and you get **$1,000** to buy your first real gear.
+
+## Scripts
+The **Scripts** app automates a whole project — travel, gear, polar alignment, framing, focus, sequences,
+flats/darks, stacking, processing and posting — in a few readable lines. “From current setup” turns what
+you've configured into a script, and every image made by a script has a **Retake** button on StarShare.
+
+```
+site atacama
+gear mount=observatory optic=petz_100 corrector=reducer08 camera=mono_6200
+wheel L R G B
+target "Orion's Sword" ra=84.537 dec=-3.946
+wait dark
+center
+rotation 116
+focus auto
+light L 20s x120 gain=0
+light R 60s x80 gain=0
+flat L R x20
+dark 20s x30 gain=0
+pack-up
+stack
+process preset=LRGB sat=0.7 title="Orion's Sword"
+```
+
 ## Modes, saves and co-op
 - **Career**: start with an old DSLR and $300; earn money from images and challenges.
 - **Sandbox**: unlimited money, all gear unlocked, optional always-clear skies.
@@ -22,7 +68,7 @@ laptop running a full imaging OS (capture suite, planetarium, guiding, stacking,
   Online uses PeerJS (WebRTC) — the public PeerJS server only introduces players.
   **LAN**: Host on LAN shows your IP; friends on the same network type it into Join (port 47800).
 
-## Run
+## Build from source
 
 ```bash
 npm --prefix web install
@@ -41,3 +87,10 @@ sit at laptop) · **R** rig controls · **F** red headlamp · **Tab** laptop ↔
 ## Data credits
 CDS Strasbourg (hips2fits, Sesame, DSS2 color & Mellinger HiPS), NASA GIBS (VIIRS Black Marble,
 Blue Marble), d3-celestial (Hipparcos-based stars, constellations, Milky Way outline).
+
+## Releasing
+Push a version tag and GitHub Actions builds macOS (arm64 + x64), Windows and Linux and publishes a release:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```

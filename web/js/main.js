@@ -20,7 +20,9 @@ import { guideApp, framingApp, tonightApp, weatherApp } from './apps/misc.js';
 import { filesApp, stackerApp, pixellabApp } from './apps/darkroom.js';
 import { shareApp, shopApp, mailApp, settingsApp, checkQuests, updatePosts } from './apps/social.js';
 import { atlasApp } from './apps/atlas.js';
+import { scriptsApp } from './apps/scripts.js';
 import * as RT from './routines.js';
+import { startTutorial } from './tutorial.js';
 import { MP, host as mpHost, join as mpJoin, leave as mpLeave, setPoseProvider } from './mp.js';
 import { showMainMenu, hideMainMenu, showPause, hidePause, isPaused, PREFS, applyPrefs, quitApp } from './menu.js';
 
@@ -69,7 +71,9 @@ function startGameUI(isNew) {
   $('#laptop').style.display = '';
   buildOS();
   setPoseProvider(getPose);
-  if (isNew) setTimeout(() => openApp('mail'), 900);
+  if (isNew && G.s.gameMode === 'career' && MP.role === 'solo') startTutorial(true);
+  else if (G.s.tutorial && !G.s.tutorial.done && MP.role === 'solo') startTutorial(false);
+  else if (isNew) setTimeout(() => openApp('mail'), 900);
   checkQuests();
   if (G.s.mode === 'night' && G.s.night) { if (!isNew && MP.role === 'solo') toast(`Resumed your session at ${LOC[G.s.night.loc].name}.`); showField(); }
   loop();
@@ -105,6 +109,7 @@ function buildOS() {
   registerApp('pixellab', pixellabApp);
   registerApp('share', shareApp);
   registerApp('shop', shopApp);
+  registerApp('scripts', scriptsApp);
   registerApp('mail', mailApp);
   registerApp('settings', settingsApp);
   renderDock();
@@ -175,7 +180,7 @@ function buildMenubar(el) {
   el.append(mb.logo, mb.app, mb.menus, mb.look, mb.status, h('div', { class: 'mb-spacer' }), mb.warp, mb.coop, mb.money, mb.night, mb.batt, mb.clock);
   on('warp', (w) => mb.warp.querySelectorAll('.mb-w[data-w]').forEach((b) => b.classList.toggle('on', +b.dataset.w === w)));
   on('money', (m) => { updateMenubar(); if (m && Math.abs(m.delta) >= 1) { const f = h('div', { class: 'money-float ' + (m.delta > 0 ? 'pos' : 'neg') }, (m.delta > 0 ? '+' : '−') + money(Math.abs(m.delta))); mb.money.append(f); setTimeout(() => f.remove(), 1600); } });
-  document.addEventListener('appfocus', (e) => { const def = { capture: 'AstroCap', planetarium: 'SkyChart', framing: 'Framing', guide: 'GuideMaster', tonight: 'Tonight', weather: 'Weather', atlas: 'Atlas', files: 'Files', stacker: 'DeepStack', pixellab: 'PixelLab', share: 'StarShare', shop: 'AstroMart', mail: 'Mail', settings: 'Settings' }; mb.app.textContent = def[e.detail] || 'Finder'; });
+  document.addEventListener('appfocus', (e) => { const def = { capture: 'AstroCap', planetarium: 'SkyChart', framing: 'Framing', guide: 'GuideMaster', tonight: 'Tonight', weather: 'Weather', atlas: 'Atlas', files: 'Files', stacker: 'DeepStack', pixellab: 'PixelLab', share: 'StarShare', shop: 'AstroMart', mail: 'Mail', settings: 'Settings', scripts: 'Scripts' }; mb.app.textContent = def[e.detail] || 'Finder'; });
   updateMenubar();
 }
 let ffActive = false;

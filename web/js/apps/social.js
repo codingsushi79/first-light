@@ -134,6 +134,7 @@ export const shareApp = {
           h('div', { class: 'row' }, h('button', { class: 'btn primary small', onclick: () => { if (G.guest) { toast('Publishing works from your own save (you are a guest in this session).', 'warn'); return; } const post = publish(f.id); if (post) { toast(`Published "${f.title}". Likes will roll in over the next days.`, 'good'); updatePosts(); render(); } } }, 'Publish'),
             h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDlg('Delete', 'Delete this image?', 'Delete')) { G.s.finals = G.s.finals.filter((x) => x.id !== f.id); idbDel('final:' + f.id); idbDel('finalthumb:' + f.id); save(); render(); } } }, 'Delete')));
       } else {
+        if (f.script) c.append(h('button', { class: 'btn small', style: { margin: '4px 0' }, title: 'Open the script that made this image', onclick: () => openApp('scripts', { text: f.script, name: 'Retake: ' + f.title }) }, '↻ Retake with script'));
         c.append(h('div', { class: 'ss-likes' }, `♥ ${p.likesNow}`, p.award && p.awardPaid ? h('span', { class: 'award' }, '🏆 ' + p.award) : null, h('span', { class: 'muted small' }, ` · score ${f.score.total}`)),
           h('div', { class: 'ss-comments' }, ...p.comments.slice(0, Math.max(1, Math.ceil(p.comments.length * Math.min(1, p.likesNow / Math.max(1, p.likesTotal) + 0.2)))).map((cm) => h('div', { class: 'small' }, h('b', {}, cm.who + ': '), cm.txt))));
       }

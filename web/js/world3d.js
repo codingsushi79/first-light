@@ -10,6 +10,7 @@ import * as S from './session.js';
 import { makeNoise, mulberry32, hashStr } from './util.js';
 
 const SKY_R = 900;
+const wrapPi = (a) => (Number.isFinite(a) ? ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI : 0);
 const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
 export function altAzToVec(alt, az, r = 1) { const a = alt * A.D2R, z = az * A.D2R; return v3(r * Math.cos(a) * Math.sin(z), r * Math.sin(a), -r * Math.cos(a) * Math.cos(z)); }
 export function vecToAltAz(v) { const n = v.clone().normalize(); return { alt: Math.asin(THREE.MathUtils.clamp(n.y, -1, 1)) * A.R2D, az: A.norm360(Math.atan2(n.x, -n.z) * A.R2D) }; }
@@ -515,7 +516,7 @@ export class World {
       if (!a.cur) a.cur = { pos: tp.clone(), yaw: t.yaw, pitch: t.pitch };
       const k = Math.min(1, dt * 10);
       a.cur.pos.lerp(tp, k);
-      let dy = t.yaw - a.cur.yaw; while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
+      const dy = wrapPi(t.yaw - a.cur.yaw);
       a.cur.yaw += dy * k; a.cur.pitch += (t.pitch - a.cur.pitch) * k;
       a.g.position.copy(a.cur.pos); a.g.rotation.y = a.cur.yaw;
       a.headPivot.rotation.x = THREE.MathUtils.clamp(a.cur.pitch, -0.9, 0.9);
@@ -584,7 +585,8 @@ export class World {
   }
   look(dx, dy) {
     const k = 0.0025 * (window.__flSens || 1);
-    this.player.yaw -= dx * k; this.player.pitch = THREE.MathUtils.clamp(this.player.pitch - dy * k, -1.45, 1.52);
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
+    this.player.yaw = wrapPi(this.player.yaw - dx * k); this.player.pitch = THREE.MathUtils.clamp(this.player.pitch - dy * k, -1.45, 1.52);
   }
   setGrab(on) {
     this.grab = on;
