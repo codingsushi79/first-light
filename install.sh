@@ -1,6 +1,7 @@
 #!/bin/sh
 # First Light installer for macOS and Linux:
 #   curl -fsSL https://raw.githubusercontent.com/codingsushi79/first-light/main/install.sh | sh
+# Optional: FIRST_LIGHT_DIR=<folder> to install elsewhere, FIRST_LIGHT_NO_OPEN=1 to not launch it.
 set -eu
 REPO="codingsushi79/first-light"
 OS="$(uname -s)"; ARCH="$(uname -m)"
@@ -21,20 +22,20 @@ case "$OS" in
     curl -fL --progress-bar "$URL" -o "$TMP/FirstLight.dmg"
     MNT="$TMP/mnt"; mkdir -p "$MNT"
     hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$TMP/FirstLight.dmg" >/dev/null
-    DEST="/Applications"; [ -w "$DEST" ] || { DEST="$HOME/Applications"; mkdir -p "$DEST"; }
+    DEST="${FIRST_LIGHT_DIR:-/Applications}"; mkdir -p "$DEST" 2>/dev/null || true; [ -w "$DEST" ] || { DEST="$HOME/Applications"; mkdir -p "$DEST"; }
     rm -rf "$DEST/First Light.app"
     cp -R "$MNT/First Light.app" "$DEST/"
     hdiutil detach "$MNT" -quiet || true
     # The app is not notarized yet; clear the download quarantine so it opens normally.
     xattr -dr com.apple.quarantine "$DEST/First Light.app" 2>/dev/null || true
     say "Installed to $DEST/First Light.app"
-    open "$DEST/First Light.app" || true
+    [ -n "${FIRST_LIGHT_NO_OPEN:-}" ] || open "$DEST/First Light.app" || true
     ;;
   Linux)
     [ "$ARCH" = "x86_64" ] || die "only x86_64 Linux builds are published (you have $ARCH)"
     URL="$(asset "amd64.AppImage")"; [ -n "$URL" ] || die "no Linux AppImage in the latest release"
     say "Downloading $(basename "$URL")…"
-    BIN="$HOME/.local/bin"; mkdir -p "$BIN"
+    BIN="${FIRST_LIGHT_DIR:-$HOME/.local/bin}"; mkdir -p "$BIN"
     curl -fL --progress-bar "$URL" -o "$BIN/first-light"
     chmod +x "$BIN/first-light"
     APPS="$HOME/.local/share/applications"; mkdir -p "$APPS"
