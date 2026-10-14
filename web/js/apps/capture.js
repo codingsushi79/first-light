@@ -27,6 +27,8 @@ export const captureApp = {
       },
     });
     let showCross = false, showStars = false;
+    const saveNote = h('div', { class: 'small', style: { marginTop: '4px' } });
+    let warnedCrop = false;
     const histCanvas = h('canvas', { class: 'hist' });
     const statLine = h('div', { class: 'statline' });
     const expBar = h('div', { class: 'expbar' });
@@ -151,7 +153,7 @@ export const captureApp = {
       const btnCap = h('button', { class: 'btn primary big', onclick: () => doCapture(false) }, '● Capture');
       const btnLoop = h('button', { class: 'btn big' + (loopOn ? ' on' : ''), onclick: () => { loopOn = !loopOn; btnLoop.classList.toggle('on', loopOn); btnLoop.textContent = loopOn ? '■ Stop loop' : '⟳ Loop'; if (loopOn) doCapture(true); } }, loopOn ? '■ Stop loop' : '⟳ Loop');
       const btnAbort = h('button', { class: 'btn big danger', onclick: () => { loopOn = false; S.abortExposure(); } }, 'Abort');
-      right.append(panel, h('div', { class: 'card' }, h('div', { class: 'row wrap' }, btnCap, btnLoop, btnAbort), expBar, expLabel,
+      right.append(panel, h('div', { class: 'card' }, h('div', { class: 'row wrap' }, btnCap, btnLoop, btnAbort), expBar, expLabel, saveNote,
         h('div', { class: 'row wrap', style: { marginTop: '6px' } },
           h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: G.s.settings.linked, onchange: (e) => { G.s.settings.linked = e.target.checked; save(); } }), 'Linked stretch'),
           h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: showCross, onchange: (e) => { showCross = e.target.checked; viewer.draw(); } }), 'Crosshair'),
@@ -173,9 +175,13 @@ export const captureApp = {
       if (!n) { toast('You are not set up outside.', 'warn'); loopOn = false; return; }
       let roi = null;
       if (cs.roi === 'center') { const ri = S.rig(); const w = Math.min(512, ri.cam.w), hh = Math.min(384, ri.cam.h); roi = { cx: Math.floor(ri.cam.w / (cs.bin || 1) / 2), cy: Math.floor(ri.cam.h / (cs.bin || 1) / 2), w, h: hh }; }
+      const willSave = !isLoop && !roi;
+      if (!isLoop && roi && !warnedCrop) { warnedCrop = true; toast('1:1 crop view is for focusing — these frames are NOT saved. Switch View to “Full frame” to save frames to Files.', 'warn', 7000); }
       try {
         await S.expose({ type: cs.type, exp: cs.exp, gain: cs.gain, offset: cs.offset, bin: cs.bin || 1, roi, target: cs.target || (G.s.target ? G.s.target.name : 'Untitled'), save: !isLoop && !roi });
       } catch (e) { toast(e.message, 'warn'); loopOn = false; return; }
+      saveNote.innerHTML = willSave ? `<span style="color:var(--good)">✓ Saved to Files</span> <span class="muted">(${cs.target || (G.s.target ? G.s.target.name : 'Untitled')} · ${cs.type})</span>`
+        : `<span style="color:var(--warn)">Preview only — not saved</span> <span class="muted">(${isLoop ? 'Loop' : '1:1 crop view'}; use Capture with View = Full frame)</span>`;
       if (isLoop && loopOn) setTimeout(() => doCapture(true), 50);
     }
     // exposure progress
