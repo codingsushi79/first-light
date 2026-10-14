@@ -33,6 +33,7 @@ export const planetariumApp = {
     let view = G.s.chartView || (G.s.chartView = { alt: 35, az: 180, fov: 110 });
     let sel = null;
     let proj = null;
+    let groundCanvas = null;
 
     // ---------- projection (stereographic, alt/az) ----------
     function setupProj(W, H) {
@@ -41,7 +42,7 @@ export const planetariumApp = {
       const R = (Math.min(W, H) * 0.5) / (2 * Math.tan((view.fov * A.D2R) / 4)) * (Math.max(W, H) / Math.min(W, H)) * 0.92;
       // rotation basis: center vector c, right vector r, up vector u (in local ENU: x=east, y=north, z=up)
       const vec = (alt, az) => [Math.cos(alt) * Math.sin(az), Math.cos(alt) * Math.cos(az), Math.sin(alt)];
-      const c = vec(a0, z0); const r = [Math.cos(z0), -Math.sin(z0), 0]; const u = [c[1] * r[2] - c[2] * r[1], c[2] * r[0] - c[0] * r[2], c[0] * r[1] - c[1] * r[0]];
+      const c = vec(a0, z0); const r = [Math.cos(z0), -Math.sin(z0), 0]; const u = [r[1] * c[2] - r[2] * c[1], r[2] * c[0] - r[0] * c[2], r[0] * c[1] - r[1] * c[0]]; // up = right × center
       const fromAltAz = (alt, az) => {
         const v = vec(alt * A.D2R, az * A.D2R);
         const X = v[0] * r[0] + v[1] * r[1] + v[2] * r[2], Y = v[0] * u[0] + v[1] * u[1] + v[2] * u[2], Z = v[0] * c[0] + v[1] * c[1] + v[2] * c[2];
@@ -136,11 +137,22 @@ export const planetariumApp = {
       const sp = P.fromAltAz(sun.alt, sun.az); if (sp) { ctx.fillStyle = '#ffd34d'; ctx.beginPath(); ctx.arc(sp[0], sp[1], Math.max(8, 0.26 * P.pxPerDeg), 0, 7); ctx.fill(); }
       // ground
       if (opts.ground) {
-        ctx.beginPath(); let first = true;
-        for (let az = 0; az <= 360; az += 1) { const p = P.fromAltAz(horizonAlt(loc(), az), az); if (!p) continue; if (first) { ctx.moveTo(p[0], p[1]); first = false; } else ctx.lineTo(p[0], p[1]); }
-        for (let az = 360; az >= 0; az -= 5) { const p = P.fromAltAz(-60, az); if (p) ctx.lineTo(p[0], p[1]); }
-        ctx.closePath(); ctx.fillStyle = `rgba(${mix([10, 14, 10], [40, 52, 34], t)},0.93)`; ctx.fill();
-        ctx.strokeStyle = 'rgba(160,190,140,.4)'; ctx.beginPath(); first = true; for (let az = 0; az <= 360; az += 1) { const p = P.fromAltAz(0, az); if (!p) { first = true; continue; } if (first) { ctx.moveTo(p[0], p[1]); first = false; } else ctx.lineTo(p[0], p[1]); } ctx.stroke();
+        // Rasterize the ground: test each (coarse) screen pixel against the site's horizon profile.
+        // A polygon outline breaks when parts of it project off-screen, filling the sky instead.
+        const step = 3, gw = Math.ceil(W / step), gh = Math.ceil(H / step);
+        if (!groundCanvas) groundCanvas = document.createElement('canvas');
+        groundCanvas.width = gw; groundCanvas.height = gh;
+        const gctx = groundCanvas.getContext('2d'); const img = gctx.createImageData(gw, gh); const px = img.data;
+        const [gr, gg, gb] = mix([10, 14, 10], [40, 52, 34], t).split(',').map(Number);
+        const hz = new Float32Array(361); for (let a = 0; a <= 360; a++) hz[a] = horizonAlt(loc(), a);
+        for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
+          const aa = P.toAltAz((x + 0.5) * step, (y + 0.5) * step);
+          const a0 = Math.floor(aa.az), f = aa.az - a0, h0 = hz[a0] * (1 - f) + hz[Math.min(360, a0 + 1)] * f;
+          if (aa.alt < h0) { const i = (y * gw + x) * 4; px[i] = gr; px[i + 1] = gg; px[i + 2] = gb; px[i + 3] = 237; }
+        }
+        gctx.putImageData(img, 0, 0);
+        ctx.imageSmoothingEnabled = true; ctx.drawImage(groundCanvas, 0, 0, W, H);
+        ctx.strokeStyle = 'rgba(160,190,140,.4)'; ctx.beginPath(); let first = true; for (let az = 0; az <= 360; az += 1) { const p = P.fromAltAz(0, az); if (!p) { first = true; continue; } if (first) { ctx.moveTo(p[0], p[1]); first = false; } else ctx.lineTo(p[0], p[1]); } ctx.stroke();
         ctx.fillStyle = '#e8c070'; ctx.font = 'bold 14px system-ui'; ctx.textAlign = 'center';
         for (const [az, l] of [[0, 'N'], [45, 'NE'], [90, 'E'], [135, 'SE'], [180, 'S'], [225, 'SW'], [270, 'W'], [315, 'NW']]) { const p = P.fromAltAz(-2.5, az); if (p && inView(p, W, H)) ctx.fillText(l, p[0], p[1] + 6); }
       }
@@ -224,10 +236,10 @@ export const planetariumApp = {
       const fits = sel.size && ri.opt ? Math.min(ri.fovW, ri.fovH) * 60 / sel.size : null;
       info.append(h('div', { class: 'pl-info-title' }, sel.id !== sel.name ? `${sel.id} — ${sel.name}` : sel.name, h('span', { class: 'x', onclick: () => { sel = null; showInfo(); draw(); } }, '✕')),
         h('div', { class: 'muted small' }, (TYPE_LABEL[sel.type] || sel.type || '') + (sel.mag && sel.mag < 30 ? ` · mag ${sel.mag}` : '') + (sel.size ? ` · ${sel.size >= 60 ? (sel.size / 60).toFixed(1) + '°' : sel.size + '′'}` : '')),
-        sel.desc ? h('div', { class: 'small', style: { margin: '6px 0' } }, sel.desc) : null,
+        sel.desc ? h('div', { class: 'small', style: { margin: '6px 0' } }, sel.desc) : '',
         kv('RA / Dec', `${A.fmtRA(sel.ra)}  ${A.fmtDec(sel.dec)}`), kv('Alt / Az', `${aa.alt.toFixed(1)}° / ${aa.az.toFixed(1)}°`),
         kv('Airmass', aa.alt > 0 ? A.airmass(aa.alt).toFixed(2) : '—'), kv('Moon distance', `${A.sep(sel.ra, sel.dec, moon.ra, moon.dec).toFixed(0)}°`),
-        fits ? kv('Fits in your FOV', fits >= 1 ? `yes (${(1 / fits * 100).toFixed(0)}% of short side)` : `no — ${(1 / fits).toFixed(1)}× too big`) : null,
+        fits ? kv('Fits in your FOV', fits >= 1 ? `yes (${(1 / fits * 100).toFixed(0)}% of short side)` : `no — ${(1 / fits).toFixed(1)}× too big`) : '',
         h('div', { class: 'row wrap', style: { marginTop: '8px' } },
           h('button', { class: 'btn primary small', onclick: () => { setTarget(sel); toast(`Target set: ${sel.name}`); } }, '★ Set target'),
           h('button', { class: 'btn small', disabled: !S.canGoto(), title: S.canGoto() ? '' : 'Needs a connected GoTo mount', onclick: () => { const r = S.gotoRaDec(sel.ra, sel.dec, sel.name); if (r.error) toast(r.error, 'warn'); } }, 'Slew'),
