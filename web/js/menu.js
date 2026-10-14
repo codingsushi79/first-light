@@ -55,7 +55,7 @@ export async function showMainMenu(cb) {
   const side = h('div', { class: 'menu-side' });
   const btns = h('div', { class: 'menu-buttons' });
   root = h('div', { class: 'menu-root ui-av' }, canvas, h('div', { class: 'menu-shade' }),
-    h('div', { class: 'menu-panel main' }, h('div', { class: 'title' }, 'First Light'), h('div', { class: 'subtitle' }, 'Astrophotography simulator'), btns, h('div', { class: 'version' }, 'v0.2 · real sky data: CDS · NASA GIBS · Hipparcos')), side);
+    h('div', { class: 'menu-panel main' }, h('div', { class: 'title' }, 'First Light'), h('div', { class: 'subtitle' }, 'Astrophotography simulator'), btns, h('div', { class: 'version' }, 'v0.3.0 · real sky data: CDS · NASA GIBS · Hipparcos')), side);
   document.body.append(root);
   stopStars = starfield(canvas);
   const slots = await listSlots();

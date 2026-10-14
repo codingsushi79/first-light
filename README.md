@@ -67,7 +67,7 @@ millisecond frames). DeepStack → *Planetary videos* keeps the sharpest frames 
 PixelLab's **wavelets** bring the detail out. Low planets suffer atmospheric dispersion — use an ADC
 or *RGB align*.
 
-## Also new in 0.2
+## New in 0.2 – 0.3
 - **Real gear**: ~100 products from ZWO, Sky-Watcher, Celestron, Canon, Nikon, Sony, Samyang, Sigma, William Optics,
   Askar, Takahashi, iOptron, Rainbow Astro, Optolong, Antlia, QHY, Player One… AstroMart groups them by brand or type.
 - **Meteor showers**: the real annual showers (Perseids, Geminids, Orionids…) with radiants and peak dates, plus sporadics —
@@ -124,5 +124,5 @@ Blue Marble), d3-celestial (Hipparcos-based stars, constellations, Milky Way out
 Push a version tag and GitHub Actions builds macOS (arm64 + x64), Windows and Linux and publishes a release:
 
 ```bash
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.4.0 && git push origin v0.4.0
 ```

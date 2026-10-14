@@ -1,7 +1,7 @@
 {
   "name": "first-light-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "First Light as a desktop application (macOS .app, Windows .exe) via Tauri v2.",
   "scripts": {
     "tauri": "tauri",
