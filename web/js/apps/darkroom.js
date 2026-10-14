@@ -153,7 +153,7 @@ export const stackerApp = {
           const id = uid();
           const integ = sel.reduce((a, f) => a + f.exp, 0);
           const meta = { id, target: L.target || 'Untitled', n: sel.length, integration: integ, filter: L.filter, cam: L.cam, optic: L.optic, focal: L.focal, W: res.W, H: res.H, nc: res.nc, method: opts.method, ref: res.refPointing, scale: res.scale, created: G.s.time, darks: job.darks.length, flats: job.flats.length,
-            quality: { hfr: avg(sel.map((f) => f.stats.hfr)), ecc: avg(sel.map((f) => f.stats.ecc)), trail: avg(sel.map((f) => f.stats.trail || 0)) }, loc: L.loc, sessions: [...new Set(sel.map((f) => f.session))].length };
+            quality: qualityOf(sel), loc: L.loc, sessions: [...new Set(sel.map((f) => f.session))].length };
           await idbSet('stack:' + id, { data: res.data, coverage: res.coverage });
           G.s.stacks.push(meta);
           while (G.s.stacks.length > 14) { const old = G.s.stacks.shift(); idbDel('stack:' + old.id); }
@@ -173,6 +173,15 @@ export const stackerApp = {
   },
 };
 const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+// Star quality of a set of subs. Measured HFR/eccentricity on the downscaled frames is polluted by
+// nebulosity and survey star halos, so sharpness is judged from what physically happened to each sub:
+// defocus relative to the critical focus zone, and tracking trail / jitter relative to the pixel scale.
+function qualityOf(sel) {
+  const defocus = avg(sel.map((f) => { const r = f.recipe; const N = r.opt.focal / r.opt.D; return Math.abs(r.focusDelta || 0) / (4.88 * 0.55 * N * N); }));
+  const trail = avg(sel.map((f) => f.stats.trail || 0));
+  const jitterPx = avg(sel.map((f) => (2.355 * (f.recipe.jitter || 0)) / Math.max(0.1, f.scale || 1)));
+  return { hfr: avg(sel.map((f) => f.stats.hfr)), ecc: avg(sel.map((f) => f.stats.ecc)), trail, defocus, jitterPx };
+}
 
 // ============================== PixelLab ==============================
 export const pixellabApp = {
@@ -188,7 +197,7 @@ export const pixellabApp = {
     let P = defaultParams();
     let mono = false;
     let combo = null;    // channel combination for mono stacks
-    function defaultParams() { return { crop: 0.03, be: true, beStr: 1, neutral: true, wb: [1, 1, 1], black: 0, mid: 0.25, white: 1, auto: true, contrast: 0.15, sat: 0.4, nr: 0.3, sharp: 0.2, starRed: 0, title: '' }; }
+    function defaultParams() { return { crop: 0.03, be: true, beStr: 1, neutral: true, wb: [1, 1, 1], black: 0, mid: 0.25, white: 1, auto: true, contrast: 0.15, sat: 0.4, nr: 0.3, sharp: 0.2, starRed: 0, hdr: 0, title: '' }; }
 
     async function loadStack(id) {
       const meta = G.s.stacks.find((s) => s.id === id); if (!meta) return;
@@ -237,6 +246,7 @@ export const pixellabApp = {
       work = { W: CW, H: CH, r: crop(r), g: crop(g), b: crop(b) };
       if (P.be) for (const k of ['r', 'g', 'b']) subtractBackground(work[k], CW, CH, P.beStr);
       if (P.neutral) neutralize(work);
+      asinhHDR(work, P.hdr);
       if (P.auto) autoStretchParams();
       render();
     }
@@ -285,7 +295,7 @@ export const pixellabApp = {
         ...['Red', 'Green', 'Blue'].map((c, i) => { const lab = h('b', {}, P.wb[i].toFixed(2)); return h('div', { class: 'sl' }, h('span', {}, c), h('input', { type: 'range', min: 0.5, max: 1.8, step: 0.01, value: P.wb[i], oninput: (e) => { P.wb[i] = +e.target.value; lab.textContent = P.wb[i].toFixed(2); render(); } }), lab); })));
       panel.append(h('div', { class: 'card' }, h('h3', {}, '3 · Stretch (histogram transformation)'),
         h('button', { class: 'btn small', onclick: () => { P.auto = true; autoStretchParams(); renderPanel(); render(); } }, 'Auto stretch'),
-        slider('Black point', 'black', 0, 0.2, 0.0005, render, (v) => v.toFixed(4)), slider('Midtones', 'mid', 0.001, 0.5, 0.001, render, (v) => v.toFixed(3)), slider('White point', 'white', 0.05, 1, 0.005)));
+        slider('Black point', 'black', 0, 0.2, 0.0005, render, (v) => v.toFixed(4)), slider('Midtones', 'mid', 0.001, 0.5, 0.001, render, (v) => v.toFixed(3)), slider('White point', 'white', 0.05, 1, 0.005), slider('HDR (protect cores)', 'hdr', 0, 1, 0.01, () => { P.auto = true; rebuild(); })));
       panel.append(h('div', { class: 'card' }, h('h3', {}, '4 · Finishing'), slider('Contrast (S-curve)', 'contrast', 0, 0.8, 0.01), slider('Saturation', 'sat', 0, 1.5, 0.01), slider('Noise reduction', 'nr', 0, 1, 0.01), slider('Sharpening', 'sharp', 0, 1.5, 0.01), slider('Star reduction', 'starRed', 0, 1, 0.01)));
       const title = h('input', { class: 'inp', value: P.title, oninput: (e) => { P.title = e.target.value; } });
       panel.append(h('div', { class: 'card' }, h('h3', {}, '5 · Export'), title, h('div', { class: 'row wrap' },
@@ -310,6 +320,18 @@ export const pixellabApp = {
 };
 
 // ---------- processing pipeline ----------
+// HDR: arcsinh stretch of luminance (colour ratios preserved). Linear for faint signal, logarithmic for
+// bright cores, so the following histogram stretch no longer burns out M42-like cores.
+export function asinhHDR(w, amount) {
+  if (!amount) return;
+  const beta = Math.pow(10, 1 + 3 * amount), norm = Math.asinh(beta), n = w.W * w.H;
+  let mx = 1e-6; for (let i = 0; i < n; i++) { const L = (w.r[i] + w.g[i] + w.b[i]) / 3; if (L > mx) mx = L; }
+  for (let i = 0; i < n; i++) {
+    const L = Math.max(0, (w.r[i] + w.g[i] + w.b[i]) / 3) / mx;
+    const k = L > 1e-9 ? Math.asinh(beta * L) / (norm * L) : beta / norm;
+    w.r[i] *= k; w.g[i] *= k; w.b[i] *= k;
+  }
+}
 function lum(w) { const n = w.W * w.H, L = new Float32Array(n); for (let i = 0; i < n; i++) L[i] = (w.r[i] + w.g[i] + w.b[i]) / 3; return L; }
 function sample(a, n = 40000) { const s = []; const st = Math.max(1, Math.floor(a.length / n)); for (let i = 0; i < a.length; i += st) s.push(a[i]); return s.sort((x, y) => x - y); }
 function subtractBackground(a, W, H, str) {
@@ -428,7 +450,7 @@ export async function autoStack({ target, filter = null, method = 'kappa', minSc
   const res = await stackJob(job, onProgress);
   const id = uid(); const integ = sel.reduce((a, f) => a + f.exp, 0);
   const meta = { id, target: L.target || 'Untitled', n: sel.length, integration: integ, filter: L.filter, cam: L.cam, optic: L.optic, focal: L.focal, W: res.W, H: res.H, nc: res.nc, method, ref: res.refPointing, scale: res.scale, created: G.s.time, darks: job.darks.length, flats: job.flats.length,
-    quality: { hfr: avg(sel.map((f) => f.stats.hfr)), ecc: avg(sel.map((f) => f.stats.ecc)), trail: avg(sel.map((f) => f.stats.trail || 0)) }, loc: L.loc, sessions: [...new Set(sel.map((f) => f.session))].length };
+    quality: qualityOf(sel), loc: L.loc, sessions: [...new Set(sel.map((f) => f.session))].length };
   await idbSet('stack:' + id, { data: res.data, coverage: res.coverage });
   G.s.stacks.push(meta);
   while (G.s.stacks.length > 14) { const old = G.s.stacks.shift(); idbDel('stack:' + old.id); }
@@ -460,12 +482,13 @@ export async function autoProcess({ target, preset = 'auto', title, params = {} 
   }
   const W = ref.W, H = ref.H;
   if (L) { const nr = new Float32Array(W * H), ng = new Float32Array(W * H), nb = new Float32Array(W * H); for (let i = 0; i < W * H; i++) { const y = (r[i] + g[i] + b[i]) / 3 + 1e-6; const k = L[i] / y; nr[i] = r[i] * k; ng[i] = g[i] * k; nb[i] = b[i] * k; } r = nr; g = ng; b = nb; }
-  const P = { crop: 0.03, be: true, beStr: 1, neutral: true, wb: [1, 1, 1], contrast: 0.15, sat: 0.4, nr: 0.3, sharp: 0.2, starRed: 0, midScale: 1, ...params };
+  const P = { crop: 0.03, be: true, beStr: 1, neutral: true, wb: [1, 1, 1], contrast: 0.15, sat: 0.4, nr: 0.3, sharp: 0.2, starRed: 0, hdr: 0, midScale: 1, ...params };
   const cx = Math.round(W * P.crop), cy = Math.round(H * P.crop), CW = W - 2 * cx, CH = H - 2 * cy;
   const crop = (a) => { const o = new Float32Array(CW * CH); for (let y = 0; y < CH; y++) o.set(a.subarray((y + cy) * W + cx, (y + cy) * W + cx + CW), y * CW); return o; };
   const work = { W: CW, H: CH, r: crop(r), g: crop(g), b: crop(b) };
   if (P.be) for (const k of ['r', 'g', 'b']) subtractBackground(work[k], CW, CH, P.beStr);
   if (P.neutral) neutralize(work);
+  asinhHDR(work, P.hdr);
   // auto stretch, then optional midtone scaling (midScale < 1 = gentler stretch to protect bright cores)
   const Ls = lum(work); const s = sample(Ls); const med = s[s.length >> 1]; const mad = s.map((v) => Math.abs(v - med)).sort((x, y) => x - y)[s.length >> 1] * 1.4826;
   P.black = Math.max(0, med - 2.5 * mad); const hi = s[Math.floor(s.length * 0.9995)] || 1; P.white = Math.max(P.black + 1e-4, Math.min(1, hi * 1.05));

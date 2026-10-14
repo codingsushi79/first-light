@@ -20,8 +20,8 @@ const STEPS = [
     text: 'You’re outside next to your camera on its tripod. <b>Click</b> the view to look around (Esc frees the mouse) and walk with <b>W A S D</b>. Look at the front of the lens and press <b>E</b>.',
     done: () => G.s.night && !G.s.night.capOn },
   { id: 'aim', title: 'Point the camera at the sky',
-    text: 'Look at the camera and press <b>E</b> to loosen the ball head — now the camera follows your gaze. Look <b>high up</b> (at least 30°), away from the house and street light, and press <b>E</b> again to lock it.',
-    done: () => { const p = S.pointing(); return p && p.alt > 28 && !document.querySelector('.field-root.grabbing'); } },
+    text: 'Look at the camera and press <b>E</b> to loosen the ball head — now the camera follows your gaze. Look <b>high up</b> (at least 45°), away from the house and street light, and press <b>E</b> again to lock it.',
+    done: () => { const p = S.pointing(); return p && p.alt > 45 && !document.querySelector('.field-root.grabbing'); } },
   { id: 'sit', title: 'Sit down at the laptop',
     text: 'Walk to the camping table and press <b>E</b> on the laptop (or press <b>Tab</b>).',
     done: () => !isFieldVisible() },
@@ -95,7 +95,7 @@ function render() {
   panel.innerHTML = '';
   const n = STEPS.length - 1;
   panel.append(
-    h('div', { class: 'tut-head' }, h('span', { class: 'lbl' }, st.final ? 'TUTORIAL COMPLETE' : `STEP ${t.step} / ${n - 1}`), h('button', { class: 'tut-x', title: 'Skip the tutorial', onclick: () => finish(true) }, 'Skip tutorial')),
+    h('div', { class: 'tut-head' }, h('span', { class: 'lbl' }, st.final ? 'TUTORIAL COMPLETE' : t.step === 0 ? 'FIRST NIGHT TUTORIAL' : `STEP ${t.step} / ${n - 1}`), h('button', { class: 'tut-x', title: 'Skip the tutorial', onclick: () => finish(true) }, 'Skip tutorial')),
     h('div', { class: 'tut-bar' }, h('span', { style: { width: `${(t.step / n) * 100}%` } })),
     h('div', { class: 'tut-title' }, st.title),
     h('div', { class: 'tut-text', html: st.text }),

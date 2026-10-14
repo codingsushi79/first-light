@@ -32,10 +32,17 @@ export function scoreImage(out, work, meta, P) {
   s += noiseS * 30; if (noiseS < 0.5) fb.push('Very noisy — more integration time (or darker skies) would help a lot.'); else if (noiseS > 0.85) fb.push('Smooth, clean data. 👏');
   const qa = meta.quality || {}; const scaleAs = meta.scale || 3;
   let starS = 1;
-  if (qa.ecc > 0.5) { starS -= Math.min(0.7, (qa.ecc - 0.5) * 2); fb.push('Stars are elongated — tracking/guiding or polar alignment issues.'); }
-  if (qa.trail > 3) { starS -= 0.3; fb.push('Visible star trails.'); }
-  const hfrAs = (qa.hfr || 1.5) * scaleAs; const ideal = Math.max(scaleAs * 1.2, 2.2);
-  if (hfrAs > ideal * 2.2 && hfrAs > 6) { starS -= 0.35; fb.push('Stars look soft — check focus.'); }
+  if (qa.defocus !== undefined) { // physical truth (newer stacks)
+    if (qa.trail > 1.5) { starS -= Math.min(0.6, (qa.trail - 1.5) * 0.15); fb.push(qa.trail > 4 ? 'Visible star trails — tracking, polar alignment or exposure too long for this focal length.' : 'Stars are slightly elongated — tracking/guiding or polar alignment.'); }
+    if (qa.defocus > 1.5) { starS -= Math.min(0.6, (qa.defocus - 1.5) * 0.12); fb.push(qa.defocus > 5 ? 'Out of focus — stars are bloated disks.' : 'Stars look soft — focus could be sharper.'); }
+    if (qa.jitterPx > 2.5) { starS -= Math.min(0.3, (qa.jitterPx - 2.5) * 0.1); fb.push('Stars are blurred by tracking jitter (wind, overloaded mount or guiding).'); }
+    if (starS > 0.95) fb.push('Pin-sharp, round stars.');
+  } else {
+    if (qa.ecc > 0.5) { starS -= Math.min(0.7, (qa.ecc - 0.5) * 2); fb.push('Stars are elongated — tracking/guiding or polar alignment issues.'); }
+    if (qa.trail > 3) { starS -= 0.3; fb.push('Visible star trails.'); }
+    const hfrAs = (qa.hfr || 1.5) * scaleAs; const ideal = Math.max(scaleAs * 1.2, 2.2);
+    if (hfrAs > ideal * 2.2 && hfrAs > 6) { starS -= 0.35; fb.push('Stars look soft — check focus.'); }
+  }
   s += Math.max(0, starS) * 20;
   let bgS = 1 - Math.min(1, grad / 0.18) - Math.min(0.6, clip * 8);
   if (grad > 0.08) fb.push('Uneven background — light pollution gradient or missing flats (vignetting).');

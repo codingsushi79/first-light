@@ -36,7 +36,7 @@ export const HELP = [
   ['dark 20s x30 gain=0 · bias x30', 'Calibration frames (the cap goes on automatically).'],
   ['pack-up', 'Drive home.'],
   ['stack [method=kappa]', 'Stack every filter of the current target.'],
-  ['process preset=LRGB sat=0.7 nr=0.3 sharpen=0.2 stars=0.2 midscale=0.8 title="…"', 'Combine & process (presets: auto color mono LRGB RGB HOO SHO).'],
+  ['process preset=LRGB sat=0.7 nr=0.3 sharpen=0.2 stars=0.2 hdr=0.9 title="…"', 'Combine & process (presets: auto color mono LRGB RGB HOO SHO; hdr protects bright cores).'],
   ['publish', 'Post the last processed image on StarShare.'],
   ['log "text"', 'Write to the log.'],
 ];
@@ -253,7 +253,7 @@ const CMDS = {
   },
   async process(c) {
     if (!G.s.target) throw new Error('No target set');
-    const p = {}; const map = { sat: 'sat', nr: 'nr', sharpen: 'sharp', stars: 'starRed', contrast: 'contrast', crop: 'crop', midscale: 'midScale', bg: 'beStr' };
+    const p = {}; const map = { sat: 'sat', nr: 'nr', sharpen: 'sharp', stars: 'starRed', contrast: 'contrast', crop: 'crop', midscale: 'midScale', bg: 'beStr', hdr: 'hdr' };
     for (const [k, v] of Object.entries(c.kv)) if (map[k]) p[map[k]] = +v;
     const id = await autoProcess({ target: G.s.target.name, preset: c.kv.preset || 'auto', title: c.kv.title, params: p });
     const f = G.s.finals.find((x) => x.id === id); f.script = SR.text; SR.lastFinal = id;
@@ -352,7 +352,7 @@ dark 60s x30 gain=0 offset=50
 bias x30 gain=0 offset=50
 pack-up
 stack
-process preset=LRGB sat=0.7 nr=0.3 sharpen=0.2 stars=0.2 midscale=0.8 title="Orion's Sword: M42 to the Horsehead"
+process preset=LRGB sat=0.45 nr=0.3 sharpen=0.2 stars=0.2 hdr=0.9 title="Orion's Sword: M42 to the Horsehead"
 publish
 ` },
   { name: 'Quick look — M42 with the starter kit', text: `# Works with the starting DSLR, kit lens and tripod (no tracking: short exposures).

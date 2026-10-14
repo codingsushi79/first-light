@@ -811,7 +811,9 @@ async function buildMaster(recipes, kind, progress, label) {
 }
 
 async function stack(job, progress) {
-  const { lights, darks, flats, biases, flatDarks, method, kappa = 2.5, normalize = true, drizzle } = job;
+  const { lights, darks, flats, biases, flatDarks, method, normalize = true, drizzle } = job;
+  // With few frames a single outlier can never exceed κσ (max z = (n-1)/√n), so tighten κ for small stacks.
+  const n0 = lights.length; const kappa = Math.min(job.kappa || 2.5, n0 < 12 ? Math.max(1.2, ((n0 - 1) / Math.sqrt(n0)) * 0.85) : 99);
   void drizzle;
   progress('Preparing…', 0);
   const mDark = await buildMaster(darks, 'dark', (s, f) => progress('Master dark — ' + s, f * 0.15), 'Dark');
