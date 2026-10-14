@@ -235,20 +235,20 @@ export const MOUNTS = [
 
 // Filter definitions: cont = continuum transmission per R,G,B band; lines = narrowband transmission
 export const FILTERS = [
-  { id: 'f_lp', kind: 'filter', name: 'Optolong L-Pro', brand: 'Optolong', price: 179, weight: 0.02, cont: [0.85, 0.72, 0.85], skyCont: [0.45, 0.42, 0.6], ha: 0.95, oiii: 0.95, sii: 0.9, desc: 'Notches out sodium & mercury lines. Modest help in the suburbs; useless for galaxies under LED lights.' },
-  { id: 'f_dual', kind: 'filter', name: 'Optolong L-eXtreme 7nm dual-band', brand: 'Optolong', price: 299, weight: 0.02, cont: [0.07, 0.06, 0.06], skyCont: [0.06, 0.05, 0.05], ha: 0.92, oiii: 0.92, sii: 0.0, desc: 'Passes only Hα and OIII. Shoot emission nebulae from the city, even under a bright moon.' },
-  { id: 'f_L', kind: 'filter', name: 'ZWO Luminance (L) 36mm', brand: 'ZWO', price: 109, weight: 0.02, cont: [1, 1, 1], skyCont: [1, 1, 1], ha: 1, oiii: 1, sii: 1, monoOnly: true, desc: 'Clear filter with UV/IR cut. Collects all visible light (detail layer).' },
-  { id: 'f_R', kind: 'filter', name: 'ZWO Red (R) 36mm', brand: 'ZWO', price: 109, weight: 0.02, cont: [1, 0, 0], skyCont: [1, 0, 0], ha: 1, oiii: 0, sii: 1, monoOnly: true, desc: 'Red filter for LRGB.' },
-  { id: 'f_G', kind: 'filter', name: 'ZWO Green (G) 36mm', brand: 'ZWO', price: 109, weight: 0.02, cont: [0, 1, 0], skyCont: [0, 1, 0], ha: 0, oiii: 0.6, sii: 0, monoOnly: true, desc: 'Green filter for LRGB.' },
-  { id: 'f_B', kind: 'filter', name: 'ZWO Blue (B) 36mm', brand: 'ZWO', price: 109, weight: 0.02, cont: [0, 0, 1], skyCont: [0, 0, 1], ha: 0, oiii: 0.4, sii: 0, monoOnly: true, desc: 'Blue filter for LRGB.' },
-  { id: 'f_ha', kind: 'filter', name: 'ZWO Hα 7nm 36mm', brand: 'ZWO', price: 209, weight: 0.02, cont: [0.07, 0, 0], skyCont: [0.06, 0, 0], ha: 0.93, oiii: 0, sii: 0, desc: 'Hydrogen-alpha 656nm. Cuts through light pollution and moonlight.' },
-  { id: 'f_oiii', kind: 'filter', name: 'ZWO OIII 7nm 36mm', brand: 'ZWO', price: 209, weight: 0.02, cont: [0, 0.035, 0.035], skyCont: [0, 0.035, 0.035], ha: 0, oiii: 0.93, sii: 0, desc: 'Doubly-ionized oxygen 501nm. Planetary nebulae and supernova remnants.' },
-  { id: 'f_sii', kind: 'filter', name: 'ZWO SII 7nm 36mm', brand: 'ZWO', price: 209, weight: 0.02, cont: [0.07, 0, 0], skyCont: [0.06, 0, 0], ha: 0, oiii: 0, sii: 0.93, desc: 'Sulphur-II 672nm. The "S" in the Hubble palette (SHO).' },
-  { id: 'f_lenhance', kind: 'filter', brand: 'Optolong', name: 'Optolong L-eNhance tri-band', price: 229, weight: 0.02, cont: [0.14, 0.12, 0.12], skyCont: [0.11, 0.1, 0.1], ha: 0.9, oiii: 0.9, sii: 0.0, desc: 'Hα, Hβ and OIII windows for color cameras — a gentler (wider) dual-band.' },
-  { id: 'f_ultimate', kind: 'filter', brand: 'Optolong', name: 'Optolong L-Ultimate 3nm dual-band', price: 399, weight: 0.02, cont: [0.035, 0.03, 0.03], skyCont: [0.028, 0.024, 0.024], ha: 0.9, oiii: 0.9, sii: 0.0, desc: 'Ultra-narrow dual-band for color cameras: punches through city skies and full moon.' },
-  { id: 'f_ha3', kind: 'filter', brand: 'Antlia', name: 'Antlia 3nm Hα Pro', price: 459, weight: 0.02, cont: [0.03, 0, 0], skyCont: [0.025, 0, 0], ha: 0.9, oiii: 0, sii: 0, desc: '3nm Hα: higher contrast and smaller star halos than 7nm.' },
-  { id: 'f_oiii3', kind: 'filter', brand: 'Antlia', name: 'Antlia 3nm OIII Pro', price: 459, weight: 0.02, cont: [0, 0.015, 0.015], skyCont: [0, 0.015, 0.015], ha: 0, oiii: 0.9, sii: 0, desc: '3nm OIII for faint shells and supernova remnants.' },
-  { id: 'f_sii3', kind: 'filter', brand: 'Antlia', name: 'Antlia 3nm SII Pro', price: 459, weight: 0.02, cont: [0.03, 0, 0], skyCont: [0.025, 0, 0], ha: 0, oiii: 0, sii: 0.9, desc: '3nm SII for the Hubble palette.' },
+  { id: 'f_lp', kind: 'filter', short: 'L-Pro', name: 'Optolong L-Pro', brand: 'Optolong', price: 179, weight: 0.02, cont: [0.85, 0.72, 0.85], skyCont: [0.45, 0.42, 0.6], ha: 0.95, oiii: 0.95, sii: 0.9, desc: 'Notches out sodium & mercury lines. Modest help in the suburbs; useless for galaxies under LED lights.' },
+  { id: 'f_dual', kind: 'filter', short: 'L-eXtreme', name: 'Optolong L-eXtreme 7nm dual-band', brand: 'Optolong', price: 299, weight: 0.02, cont: [0.07, 0.06, 0.06], skyCont: [0.06, 0.05, 0.05], ha: 0.92, oiii: 0.92, sii: 0.0, desc: 'Passes only Hα and OIII. Shoot emission nebulae from the city, even under a bright moon.' },
+  { id: 'f_L', kind: 'filter', short: 'L', name: 'ZWO Luminance (L) 36mm', brand: 'ZWO', price: 109, weight: 0.02, cont: [1, 1, 1], skyCont: [1, 1, 1], ha: 1, oiii: 1, sii: 1, monoOnly: true, desc: 'Clear filter with UV/IR cut. Collects all visible light (detail layer).' },
+  { id: 'f_R', kind: 'filter', short: 'R', name: 'ZWO Red (R) 36mm', brand: 'ZWO', price: 109, weight: 0.02, cont: [1, 0, 0], skyCont: [1, 0, 0], ha: 1, oiii: 0, sii: 1, monoOnly: true, desc: 'Red filter for LRGB.' },
+  { id: 'f_G', kind: 'filter', short: 'G', name: 'ZWO Green (G) 36mm', brand: 'ZWO', price: 109, weight: 0.02, cont: [0, 1, 0], skyCont: [0, 1, 0], ha: 0, oiii: 0.6, sii: 0, monoOnly: true, desc: 'Green filter for LRGB.' },
+  { id: 'f_B', kind: 'filter', short: 'B', name: 'ZWO Blue (B) 36mm', brand: 'ZWO', price: 109, weight: 0.02, cont: [0, 0, 1], skyCont: [0, 0, 1], ha: 0, oiii: 0.4, sii: 0, monoOnly: true, desc: 'Blue filter for LRGB.' },
+  { id: 'f_ha', kind: 'filter', short: 'Hα 7nm', name: 'ZWO Hα 7nm 36mm', brand: 'ZWO', price: 209, weight: 0.02, cont: [0.07, 0, 0], skyCont: [0.06, 0, 0], ha: 0.93, oiii: 0, sii: 0, desc: 'Hydrogen-alpha 656nm. Cuts through light pollution and moonlight.' },
+  { id: 'f_oiii', kind: 'filter', short: 'OIII 7nm', name: 'ZWO OIII 7nm 36mm', brand: 'ZWO', price: 209, weight: 0.02, cont: [0, 0.035, 0.035], skyCont: [0, 0.035, 0.035], ha: 0, oiii: 0.93, sii: 0, desc: 'Doubly-ionized oxygen 501nm. Planetary nebulae and supernova remnants.' },
+  { id: 'f_sii', kind: 'filter', short: 'SII 7nm', name: 'ZWO SII 7nm 36mm', brand: 'ZWO', price: 209, weight: 0.02, cont: [0.07, 0, 0], skyCont: [0.06, 0, 0], ha: 0, oiii: 0, sii: 0.93, desc: 'Sulphur-II 672nm. The "S" in the Hubble palette (SHO).' },
+  { id: 'f_lenhance', kind: 'filter', short: 'L-eNhance', brand: 'Optolong', name: 'Optolong L-eNhance tri-band', price: 229, weight: 0.02, cont: [0.14, 0.12, 0.12], skyCont: [0.11, 0.1, 0.1], ha: 0.9, oiii: 0.9, sii: 0.0, desc: 'Hα, Hβ and OIII windows for color cameras — a gentler (wider) dual-band.' },
+  { id: 'f_ultimate', kind: 'filter', short: 'L-Ultimate', brand: 'Optolong', name: 'Optolong L-Ultimate 3nm dual-band', price: 399, weight: 0.02, cont: [0.035, 0.03, 0.03], skyCont: [0.028, 0.024, 0.024], ha: 0.9, oiii: 0.9, sii: 0.0, desc: 'Ultra-narrow dual-band for color cameras: punches through city skies and full moon.' },
+  { id: 'f_ha3', kind: 'filter', short: 'Hα 3nm', brand: 'Antlia', name: 'Antlia 3nm Hα Pro', price: 459, weight: 0.02, cont: [0.03, 0, 0], skyCont: [0.025, 0, 0], ha: 0.9, oiii: 0, sii: 0, desc: '3nm Hα: higher contrast and smaller star halos than 7nm.' },
+  { id: 'f_oiii3', kind: 'filter', short: 'OIII 3nm', brand: 'Antlia', name: 'Antlia 3nm OIII Pro', price: 459, weight: 0.02, cont: [0, 0.015, 0.015], skyCont: [0, 0.015, 0.015], ha: 0, oiii: 0.9, sii: 0, desc: '3nm OIII for faint shells and supernova remnants.' },
+  { id: 'f_sii3', kind: 'filter', short: 'SII 3nm', brand: 'Antlia', name: 'Antlia 3nm SII Pro', price: 459, weight: 0.02, cont: [0.03, 0, 0], skyCont: [0.025, 0, 0], ha: 0, oiii: 0, sii: 0.9, desc: '3nm SII for the Hubble palette.' },
 ];
 
 export const ACCESSORIES = [
@@ -366,6 +366,8 @@ export function rigInfo(rig) {
   });
   return info;
 }
+// Short filter label for tables, menus and FITS headers ("Hα 3nm" rather than the full product name)
+export function filterLabel(id) { const f = id && GEAR[id]; return f ? f.short || f.name : id || 'none'; }
 export function currentFilterIds(rig) {
   const cam = GEAR[rig.camera];
   if (cam && cam.mono && (rig.acc || []).includes('wheel')) return (rig.wheel || []).filter(Boolean);

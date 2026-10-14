@@ -3,7 +3,7 @@ import { h, tabs, toast, select, num, confirmDlg } from '../wm.js';
 import { Viewer, drawHistogram, lineChart, canvasFromRGBA, bar } from '../components.js';
 import * as A from '../astro.js';
 import { G, on, off, emit, fmtTime, fmtDur, save } from '../state.js';
-import { GEAR, FILTERS, sensorAt, money } from '../gear.js';
+import { GEAR, FILTERS, sensorAt, money, filterLabel } from '../gear.js';
 import * as S from '../session.js';
 import * as RT from '../routines.js';
 
@@ -49,7 +49,7 @@ export const captureApp = {
       it('Median', `${st.median.toFixed(0)} ADU`, st.median > fr.res.maxADU * 0.6 ? 'warn' : ''); it('Stars', st.stars, st.stars < 15 ? 'warn' : '');
       it('HFR', `${st.hfr.toFixed(2)}px (${hfrAs.toFixed(1)}″)`); it('Ecc', st.ecc.toFixed(2), st.ecc > 0.6 ? 'warn' : '');
       it('Sat', `${(st.saturated * 100).toFixed(2)}%`, st.saturated > 0.005 ? 'warn' : ''); it('Temp', `${m.temp}°C`);
-      if (m.filter) it('Filter', FILTERS.find((f) => f.id === m.filter)?.name.split(' ')[0] || m.filter);
+      if (m.filter) it('Filter', filterLabel(m.filter));
       if (fr.res.trailPx > 3) it('Trail', `${fr.res.trailPx.toFixed(0)}px`, 'warn');
       if (liveOn && fr.res.live) it('LIVE STACK', `${fr.res.live.n} frames · noise ÷${Math.sqrt(fr.res.live.n).toFixed(1)}`, 'ok');
       if (fr.res.meteors) it('☄', `${fr.res.meteors} meteor${fr.res.meteors > 1 ? 's' : ''}!`, 'ok');
@@ -95,7 +95,7 @@ export const captureApp = {
       dev('camera', 'Camera', ri.cam ? `${ri.cam.name} (USB)` : '—', !!ri.cam, 'No camera');
       dev('mount', 'Mount', mount.name, mount.computer, mount.type === 'fixed' ? 'A photo tripod has no electronics.' : 'This mount is controlled by hand / its own buttons (Field view).');
       dev('focuser', 'Focuser', 'Electronic focuser motor', ri.hasAF, ri.isLens ? 'Camera lenses are focused by hand (Field view).' : 'No motorized focuser — focus by hand (Field view).');
-      dev('wheel', 'Filter wheel', `7-position wheel: ${ri.filters.map((f) => FILTERS.find((x) => x.id === f)?.name.split(' ')[0]).join(', ') || 'empty'}`, ri.hasWheel, ri.cam && ri.cam.mono ? 'No filter wheel in your rig.' : 'Filter wheels are for mono cameras.');
+      dev('wheel', 'Filter wheel', `7-position wheel: ${ri.filters.map((f) => filterLabel(f)).join(', ') || 'empty'}`, ri.hasWheel, ri.cam && ri.cam.mono ? 'No filter wheel in your rig.' : 'Filter wheels are for mono cameras.');
       dev('guider', 'Guider (GuideMaster)', 'Guide camera + guide scope', ri.hasGuide && (mount.computer || mount.guideAxes), ri.hasGuide ? 'Mount cannot accept guide pulses.' : 'No guide kit in your rig.');
       wrap.append(devs);
       // rig summary
@@ -312,7 +312,7 @@ export const captureApp = {
         tbl.append(h('tr', { class: seq.state.running && seq.state.row === i ? 'active' : '' },
           h('td', {}, i + 1),
           h('td', {}, select([['light', 'Light'], ['dark', 'Dark'], ['flat', 'Flat'], ['bias', 'Bias']], row.type, (v) => { row.type = v; })),
-          h('td', {}, filters.length ? select([['', '(current)'], ...filters.map((f) => [f, FILTERS.find((x) => x.id === f)?.name.split(' ')[0] || f])], row.filter || '', (v) => { row.filter = v || null; }) : h('span', { class: 'muted' }, S.currentFilter() ? S.currentFilter().name.split(' ')[0] : '—')),
+          h('td', {}, filters.length ? select([['', '(current)'], ...filters.map((f) => [f, filterLabel(f)])], row.filter || '', (v) => { row.filter = v || null; }) : h('span', { class: 'muted' }, S.currentFilter() ? filterLabel(S.currentFilter().id) : '—')),
           h('td', {}, num(row.exp, (v) => { row.exp = Math.max(0.0001, v); updEta(); }, { step: 'any', style: { width: '80px' } })),
           h('td', {}, cam.type === 'dslr' ? select(cam.isos, row.gain, (v) => { row.gain = +v; }) : num(row.gain, (v) => { row.gain = v; }, { style: { width: '64px' } })),
           h('td', {}, cam.type === 'dslr' ? '' : num(row.offset, (v) => { row.offset = v; }, { style: { width: '56px' } })),

@@ -3,7 +3,7 @@ import { h, toast, openApp, select, confirmDlg, promptDlg, dialog } from '../wm.
 import { Viewer, drawHistogram, canvasFromRGBA, bar } from '../components.js';
 import * as A from '../astro.js';
 import { G, on, off, emit, save, fmtTime, fmtDate, fmtDur, idbGet, idbSet, idbDel } from '../state.js';
-import { GEAR, LOC, FILTERS } from '../gear.js';
+import { GEAR, LOC, FILTERS, filterLabel } from '../gear.js';
 import { viewRecipe, stackJob } from '../imaging.js';
 import { uid } from '../util.js';
 import { scoreImage } from './social.js';
@@ -11,7 +11,7 @@ import { cat } from '../catalog.js';
 import { luckySeeing } from '../bodies.js';
 import { ensureSpace, stackBytes, finalBytes, usage, fmtBytes, frameBytes } from '../storage.js';
 
-const fname = (f) => FILTERS.find((x) => x.id === f)?.name.split(' ')[0] || f || 'none';
+const fname = (f) => (f ? filterLabel(f) : 'none');
 
 function groupFrames() {
   const groups = {};

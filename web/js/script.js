@@ -11,15 +11,15 @@ import { publish } from './apps/social.js';
 import { uploadFinal } from './starshare-net.js';
 import { PREFS } from './menu.js';
 
-export const FILTER_NAMES = { L: 'f_L', R: 'f_R', G: 'f_G', B: 'f_B', HA: 'f_ha', OIII: 'f_oiii', SII: 'f_sii', LP: 'f_lp', DUAL: 'f_dual', NONE: null };
-const filterId = (n) => { const k = String(n).toUpperCase(); if (k in FILTER_NAMES) return FILTER_NAMES[k]; if (GEAR[n] && GEAR[n].kind === 'filter') return n; throw new Error(`Unknown filter “${n}” (use L R G B Ha OIII SII LP Dual)`); };
+export const FILTER_NAMES = { L: 'f_L', R: 'f_R', G: 'f_G', B: 'f_B', HA: 'f_ha', OIII: 'f_oiii', SII: 'f_sii', HA3: 'f_ha3', OIII3: 'f_oiii3', SII3: 'f_sii3', LP: 'f_lp', DUAL: 'f_dual', ENHANCE: 'f_lenhance', ULTIMATE: 'f_ultimate', NONE: null };
+const filterId = (n) => { const k = String(n).toUpperCase(); if (k in FILTER_NAMES) return FILTER_NAMES[k]; if (GEAR[n] && GEAR[n].kind === 'filter') return n; throw new Error(`Unknown filter “${n}” (use L R G B Ha OIII SII Ha3 OIII3 SII3 LP Dual Enhance Ultimate)`); };
 const filterName = (id) => (Object.entries(FILTER_NAMES).find(([, v]) => v === id) || [id || 'none'])[0].replace('HA', 'Ha');
 
 export const HELP = [
   ['site <id>', 'Travel there tonight (packs up first if you are elsewhere). Ids are listed in Atlas.'],
   ['date 2026-12-09', 'Sandbox: jump to a date (packs up first).'],
   ['gear mount=… optic=… camera=… corrector=… filter=…', 'Assemble the rig (gear ids; also zoom= fstop= for lenses).'],
-  ['wheel L R G B Ha OIII SII', 'Fill the filter wheel (attaches it).'],
+  ['wheel L R G B Ha3 OIII3 SII3', 'Fill the filter wheel (attaches it). Ha/OIII/SII = ZWO 7nm, Ha3/OIII3/SII3 = Antlia 3nm.'],
   ['accessories guidekit autofocus dew panel power', 'Accessories mounted on the rig.'],
   ['connect', 'Connect every device the rig has; take the lens cap off.'],
   ['cap on|off · panel on|off · dew-heater on|off', 'Physical things on the optics.'],
