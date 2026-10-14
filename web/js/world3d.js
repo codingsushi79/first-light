@@ -609,7 +609,7 @@ export class World {
   }
 
   // ------------------------------------------------------------ per-frame
-  start() { if (this.running) return; this.running = true; this.clock.getDelta(); const loop = () => { if (!this.running) return; this.frame(); requestAnimationFrame(loop); }; requestAnimationFrame(loop); }
+  start() { if (this.running) return; this.running = true; this.clock.getDelta(); const loop = () => { if (!this.running) return; try { this.frame(); } catch (e) { (window.__reportError || console.error)(e); } requestAnimationFrame(loop); }; requestAnimationFrame(loop); }
   stop() { this.running = false; if (document.pointerLockElement) document.exitPointerLock(); }
 
   frame() {

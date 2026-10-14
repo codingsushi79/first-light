@@ -88,6 +88,16 @@ function _skipDay() {
   emit('newday', {}); emit('tick', 0); save();
 }
 
+// Sandbox: jump to any date (you are at home in the daytime). Moon phase, sky and weather follow.
+function _setDate(y, mo, d) {
+  if (G.s.gameMode !== 'sandbox') return { error: 'Choosing the date is a sandbox feature.' };
+  if (G.s.mode !== 'day') return { error: 'Pack up and go home first.' };
+  const home = LOC.backyard;
+  G.s.time = localMs(y, mo, d, 13, 0, home.tz);
+  emit('newday', {}); emit('tick', 0); save();
+  return { ok: true };
+}
+
 export function log(msg) {
   const n = night(); if (!n) return;
   n.log.push({ t: G.s.time, msg }); if (n.log.length > 300) n.log.shift();
@@ -259,7 +269,7 @@ function _gotoRaDec(ra, dec, label = '') {
   const mount = GEAR[G.s.rig.mount], m = n.mount, loc = locNow();
   if (!mount.goto) return { error: 'This mount has no GoTo — aim it by hand.' };
   if (!n.connected.mount) return { error: 'Mount not connected.' };
-  if (m.parked) return { error: 'Mount is parked. Unpark first.' };
+  if (m.parked) { m.parked = false; log('Mount unparked for GoTo.'); }
   const L = A.lst(G.s.time, loc.lon);
   const aa = A.radec2altaz(ra, dec, L, loc.lat);
   if (aa.alt < 0) return { error: `${label || 'Target'} is below the horizon (alt ${aa.alt.toFixed(1)}°).` };
@@ -542,6 +552,7 @@ async function finishExposure() {
 
 // wait for sim time to advance by `sec`
 export function waitSim(sec) {
+  if (!Number.isFinite(sec)) sec = 1; // a NaN wait would freeze the clock
   return new Promise((resolve, reject) => { T.waiters.push({ until: G.s.time + sec * 1000, resolve, reject }); });
 }
 
@@ -692,7 +703,7 @@ export const NET = { role: 'solo', rpc: null };
 const OPTIMISTIC = new Set(['setProp', 'setTarget']); // pure state edits: apply locally right away too
 const net = (name, fn) => (...args) => { if (NET.role !== 'client') return fn(...args); if (OPTIMISTIC.has(name)) fn(...args); return NET.rpc(name, args); };
 export const LOCAL = {
-  startNight: _startNight, endNight: _endNight, skipDay: _skipDay, setTracking: _setTracking, nudge: _nudge, aimAltAz: _aimAltAz, rotateCamera: _rotateCamera,
+  startNight: _startNight, endNight: _endNight, skipDay: _skipDay, setDate: _setDate, setTracking: _setTracking, nudge: _nudge, aimAltAz: _aimAltAz, rotateCamera: _rotateCamera,
   gotoRaDec: _gotoRaDec, syncTo: _syncTo, park: _park, unpark: _unpark, adjustPolar: _adjustPolar, startGuiding: _startGuiding, stopGuiding: _stopGuiding,
   dither: _dither, moveFocus: _moveFocus, setFocus: _setFocus, useHairDryer: _useHairDryer, wipeOptics: _wipeOptics, expose: _expose, abortExposure: _abortExposure,
   setWarp: _setWarp, setProp: _setProp, setTarget: _setTarget, setRig: _setRig, calibrateGuider: _calibrateGuider,
@@ -700,6 +711,7 @@ export const LOCAL = {
 export const startNight = net('startNight', _startNight);
 export const endNight = net('endNight', _endNight);
 export const skipDay = net('skipDay', _skipDay);
+export const setDate = net('setDate', _setDate);
 export const setTracking = net('setTracking', _setTracking);
 export const nudge = net('nudge', _nudge);
 export const aimAltAz = net('aimAltAz', _aimAltAz);

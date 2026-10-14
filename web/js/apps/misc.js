@@ -241,6 +241,15 @@ export const weatherApp = {
         act.append(h('div', {}, `It’s ${fmtDate(G.s.time, home.tz)}, ${fmtTime(G.s.time, home.tz)}. `, hr >= 4 ? 'Tonight’s forecast for this site is below.' : ''),
           h('button', { class: 'btn primary big', onclick: async () => { const r = await S.startNight(locId); if (r.error) toast(r.error, 'warn'); else { toast(`Driving to ${loc.name}… you set up as the sun goes down.`); emit('wentOut'); } } }, `🌙 Head out tonight → ${loc.name}${loc.travel ? ' (' + money(loc.travel) + ')' : ''}`),
           h('button', { class: 'btn', onclick: async () => { if (await confirmDlg('Skip a day?', 'Stay in tonight and skip to tomorrow?', 'Skip')) S.skipDay(); render(); } }, 'Stay in, skip to tomorrow'));
+        if (G.s.gameMode === 'sandbox') {
+          const p = localParts(G.s.time, home.tz);
+          const dateIn = h('input', { class: 'inp', type: 'date', value: `${p.y}-${String(p.mo + 1).padStart(2, '0')}-${String(p.d).padStart(2, '0')}` });
+          const seasons = [['Mar 20', 2, 20, 'spring galaxies (M51, M81/82, M101, Leo Triplet)'], ['Jun 21', 5, 21, 'summer Milky Way core, Lagoon, Eagle'], ['Aug 15', 7, 15, 'Cygnus, Veil, North America'], ['Dec 21', 11, 21, 'Orion, Rosette, Horsehead']];
+          act.append(h('div', { class: 'row wrap', style: { width: '100%' } }, h('b', {}, '📅 Sandbox date'), dateIn,
+            h('button', { class: 'btn primary', onclick: async () => { const [y, m, d] = dateIn.value.split('-').map(Number); if (!y) return; const r = await S.setDate(y, m - 1, d); if (r && r.error) toast(r.error, 'warn'); else { toast(`It's now ${fmtDate(G.s.time, home.tz)}, ${y}. The Moon, sky and weather follow the date.`, 'good'); render(); } } }, 'Jump'),
+            ...seasons.map(([lab, m, d, tip]) => h('button', { class: 'btn small', title: tip, onclick: async () => { const r = await S.setDate(p.y + (m < p.mo ? 1 : 0), m, d); if (r && r.error) toast(r.error, 'warn'); else render(); } }, lab)),
+            h('span', { class: 'muted small' }, 'Hover the shortcuts for what’s up that season. Tip: check the Moon phase below before you go.')));
+        }
       }
       content.append(act);
       // 5-night forecast grid

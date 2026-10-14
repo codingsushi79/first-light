@@ -67,6 +67,8 @@ export function createHud(root, cb) {
     if (!ri.hasPower && n.battery < 20) flags.push(`LAPTOP BATTERY ${Math.round(n.battery)}%`);
     if (mount.meridian && !n.mount.tracking && n.mount.synced && n.mount.frame === 'hadec') flags.push('MOUNT STOPPED');
     if (env.clouds > 0.6) flags.push('CLOUDS');
+    if (n.mount.slew) flags.unshift('SLEWING');
+    else if (RT.R.activity) flags.unshift(RT.R.activity.toUpperCase());
     warn.textContent = flags.join('   ·   ');
     // rig
     const ex = S.T.exposure;

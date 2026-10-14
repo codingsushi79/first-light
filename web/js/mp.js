@@ -6,7 +6,7 @@ import * as S from './session.js';
 
 const PREFIX = 'firstlight-coop-';
 const COLORS = ['#8fd3ff', '#ffb547', '#9fe3a8', '#ff7a9c', '#c39bff', '#ffe066'];
-const HOST_ONLY = new Set(['startNight', 'endNight', 'skipDay']);
+const HOST_ONLY = new Set(['startNight', 'endNight', 'skipDay', 'setDate']);
 
 export const MP = {
   role: 'solo', code: null, peer: null, conns: new Map(), hostConn: null,

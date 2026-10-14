@@ -7,7 +7,8 @@ import * as S from './session.js';
 import { mulberry32, gaussFactory } from './util.js';
 
 const rng = mulberry32(12345), gauss = gaussFactory(rng);
-export const R = { seq: null, busy: null, abort: false, solveResult: null, afCurve: [], tppa: null };
+export const R = { seq: null, busy: null, abort: false, solveResult: null, afCurve: [], tppa: null, activity: '' };
+export function setActivity(text) { R.activity = text || ''; emit('activity', R.activity); }
 
 export function cameraSettings() {
   // persisted capture settings
@@ -46,19 +47,31 @@ export async function captureAndSolve(exp) {
 }
 
 export async function centerOn(target, log = () => {}, tolArcsec = 60) {
+  try { return await centerOnInner(target, log, tolArcsec); } finally { setActivity(''); }
+}
+async function centerOnInner(target, log, tolArcsec) {
   const mount = GEAR[G.s.rig.mount];
+  const n = S.night();
+  if (!n) throw new Error('You are not out observing.');
+  if (mount.goto && !n.connected.mount) throw new Error('Connect the mount first: AstroCap → Equipment → Mount → Connect.');
+  if (!n.connected.camera) throw new Error('Connect the camera first: AstroCap → Equipment → Camera → Connect (plate solving needs images).');
+  if (n.capOn) throw new Error('The lens cap is on — plate solving needs to see stars.');
   for (let it = 0; it < 6; it++) {
     if (R.abort) throw new Error('Aborted');
-    if (mount.goto && S.night().connected.mount) {
+    if (mount.goto) {
       const r = await S.gotoRaDec(target.ra, target.dec, target.name);
-      if (r.error) throw new Error(r.error);
-      await S.waitSim(r.dur + 1);
+      if (r && r.error) throw new Error(r.error);
+      const dur = r && Number.isFinite(r.dur) ? r.dur : 5;
+      setActivity(`Slewing to ${target.name || 'target'}… (~${Math.ceil(dur)}s)`);
+      await S.waitSim(dur + 1);
     }
+    setActivity(`Plate solving (attempt ${it + 1})…`);
     log(`Capturing plate-solve image (attempt ${it + 1})…`);
     const sol = await captureAndSolve();
     const d = A.sep(sol.ra, sol.dec, target.ra, target.dec) * 3600;
     log(`Off target by ${A.fmtAngle(d)}`);
-    if (d < tolArcsec) { log('Target centered ✓'); return sol; }
+    if (d < tolArcsec) { log('Target centered ✓'); emit('toast', { msg: `Centered on ${target.name || 'target'} ✓ (within ${A.fmtAngle(d)})`, kind: 'good' }); return sol; }
+    setActivity(`Off by ${A.fmtAngle(d)} — syncing and re-slewing…`);
     if (!(mount.goto && S.night().connected.mount)) throw new Error(`Off by ${A.fmtAngle(d)} — this mount has no GoTo; nudge it by hand (Field view) and solve again.`);
     S.syncTo(sol.ra, sol.dec);
   }

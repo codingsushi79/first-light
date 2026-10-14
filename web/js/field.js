@@ -114,7 +114,7 @@ export function showField() {
   if (!G.s.night) { toast('You are at home. Use the Weather app to head out for a night of imaging.', 'info'); return; }
   visible = true; root.style.display = '';
   ensureWorld(); world.resize(); world.start();
-  clearInterval(hudTimer); hud.update(); hudTimer = setInterval(() => hud.update(), 250);
+  clearInterval(hudTimer); const hu = () => { try { hud.update(); } catch (e) { (window.__reportError || console.error)(e); } }; hu(); hudTimer = setInterval(hu, 250);
   document.body.classList.add('in-field');
   const t = () => { if (visible && panelOpen) refreshLive(); };
   let last = 0; const tick = () => { const n = performance.now(); if (n - last > 250) { last = n; t(); } };

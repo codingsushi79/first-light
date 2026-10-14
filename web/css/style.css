@@ -388,3 +388,5 @@ body.in-field .toasts { right: 344px; }
 .modal-title { padding: 18px 20px 0; } .modal-body { padding: 12px 20px; } .modal-btns { padding: 12px 20px 18px; }
 .files-tree, .st-left, .mail-list, .shop-side { background: rgba(255,255,255,.035); }
 .pl-info, .pl-results { border-radius: 14px; background: rgba(20,22,30,.78); backdrop-filter: blur(24px); }
+
+.chip.act { color: #9fd8ff; background: rgba(10,132,255,.25); animation: pulse 1.6s infinite; }

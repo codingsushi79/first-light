@@ -188,7 +188,7 @@ function updateMenubar() {
   const s = G.s; if (!s) return;
   const loc = s.night ? LOC[s.night.loc] : LOC.backyard;
   const n = s.night;
-  mb.clock.textContent = `${fmtDate(s.time, loc.tz)}  ${fmtTime(s.time, loc.tz)}`;
+  mb.clock.textContent = `${fmtDate(s.time, loc.tz)}  ${fmtTime(s.time, loc.tz, !!n)}`;
   const mtxt = isSandbox() ? '∞' : money(s.money);
   mb.money.firstChild ? (mb.money.firstChild.nodeType === 3 ? (mb.money.firstChild.textContent = mtxt) : mb.money.prepend(mtxt)) : mb.money.append(mtxt);
   mb.warp.style.display = s.mode === 'night' && MP.role !== 'client' ? '' : 'none';
@@ -204,6 +204,8 @@ function updateMenubar() {
     const exTxt = ex ? `● ${ex.rendering ? 'Downloading' : `Exposing ${Math.min(ex.exp, (s.time - ex.t0) / 1000).toFixed(0)}/${ex.exp >= 1 ? ex.exp.toFixed(0) : ex.exp}s`}` : '';
     mb.status.innerHTML = '';
     mb.status.append(h('span', { class: 'chip' }, loc.name.split(' (')[0]), h('span', { class: 'chip' }, sunTxt), h('span', { class: 'chip' }, `${env.temp.toFixed(0)}°C`), h('span', { class: 'chip' + (env.clouds > 0.4 ? ' warn' : '') }, `☁ ${(env.clouds * 100).toFixed(0)}%`), h('span', { class: 'chip' }, `☾ ${(env.moonIllum * 100).toFixed(0)}% ${env.moonAlt > 0 ? '↑' : '↓'}`));
+    if (n.mount.slew) mb.status.append(h('span', { class: 'chip act' }, '● Slewing…'));
+    if (RT.R.activity && !n.mount.slew) mb.status.append(h('span', { class: 'chip act' }, '● ' + RT.R.activity));
     if (exTxt) mb.status.append(h('span', { class: 'chip rec' }, exTxt));
     if (n.capOn) mb.status.append(h('span', { class: 'chip warn', title: 'Lens cap is on!' }, 'cap on'));
     if (n.dew > 0.2) mb.status.append(h('span', { class: 'chip warn' }, 'dew!'));
@@ -237,7 +239,10 @@ function updateWidget() {
 }
 
 // ---------------- loop ----------------
-let last = performance.now(), lastUI = 0;
+let last = performance.now(), lastUI = 0, lastErr = 0;
+// Never let one error freeze the clock: log it, tell the player once in a while, keep going.
+function reportError(e) { console.error(e); if (Date.now() - lastErr > 15000) { lastErr = Date.now(); toast(`Something went wrong (the game keeps running): ${e && e.message ? e.message : e}`, 'bad', 9000); } }
+window.__reportError = reportError;
 function loop() {
   const now = performance.now();
   let dt = Math.min(1, (now - last) / 1000); last = now;
@@ -248,9 +253,9 @@ function loop() {
       else if (S.T.waiters.length) dt = Math.max(dt, Math.min(...S.T.waiters.map((w) => w.until - G.s.time)) / 1000 / S.T.warp);
       else if (!(RT.R.seq && RT.R.seq.state.running)) { ffActive = false; mb.ff.classList.remove('on'); }
     }
-    S.tick(dt);
+    try { S.tick(dt); } catch (e) { reportError(e); }
   }
-  if (now - lastUI > 250) { lastUI = now; updateMenubar(); updateWidget(); }
+  if (now - lastUI > 250) { lastUI = now; try { updateMenubar(); updateWidget(); } catch (e) { reportError(e); } }
   setTimeout(loop, 33);
 }
 setInterval(() => save(), 20000);
