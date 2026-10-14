@@ -50,7 +50,7 @@ export async function centerOn(target, log = () => {}, tolArcsec = 60) {
   for (let it = 0; it < 6; it++) {
     if (R.abort) throw new Error('Aborted');
     if (mount.goto && S.night().connected.mount) {
-      const r = S.gotoRaDec(target.ra, target.dec, target.name);
+      const r = await S.gotoRaDec(target.ra, target.dec, target.name);
       if (r.error) throw new Error(r.error);
       await S.waitSim(r.dur + 1);
     }
@@ -119,7 +119,7 @@ function fitParabola(pts) {
 export async function tppaStart(onUpdate, log = () => {}) {
   const n = S.night(); const mount = GEAR[G.s.rig.mount];
   if (mount.type !== 'eq') throw new Error('Polar alignment only applies to equatorial mounts/trackers.');
-  if (!n.mount.tracking && mount.type === 'eq') S.setTracking(true);
+  if (!n.mount.tracking && mount.type === 'eq') await S.setTracking(true);
   const pts = [];
   for (let i = 0; i < 3; i++) {
     if (R.abort) throw new Error('Aborted');
@@ -164,7 +164,7 @@ export async function runSequence(seq, log = () => {}) {
     if (!n.connected.camera) throw new Error('Connect the camera first.');
     const tgt = seq.target;
     // cooling
-    if (seq.opts.cool && ri.cam.cooled && !n.cam.coolerOn) { n.cam.coolerOn = true; set('Cooling camera…'); }
+    if (seq.opts.cool && ri.cam.cooled && !n.cam.coolerOn) { await S.setProp('cam.coolerOn', true); set('Cooling camera…'); }
     if (ri.cam.cooled && n.cam.coolerOn) {
       const t0 = G.s.time;
       while (Math.abs(n.cam.temp - Math.max(n.cam.setpoint, S.envAt(G.s.time).temp - ri.cam.deltaT)) > 0.6 && G.s.time - t0 < 900000) { if (R.abort) throw new Error('Aborted'); await S.waitSim(10); set(`Cooling camera… ${n.cam.temp.toFixed(1)}°C`); }
@@ -173,8 +173,8 @@ export async function runSequence(seq, log = () => {}) {
     if (tgt && lightsLeft && seq.opts.center) { set(`Centering ${tgt.name}…`); await centerOn(tgt, (m) => { log(m); set(m); }); }
     if (lightsLeft && seq.opts.afStart && ri.hasAF && n.connected.focuser) { set('Autofocus…'); await autofocus(() => {}, log); }
     if (lightsLeft && seq.opts.guide && ri.hasGuide && n.connected.guider && !n.guider.guiding) {
-      if (!n.guider.calibrated) { set('Calibrating guider…'); await S.waitSim(60); n.guider.calibrated = true; emit('guider'); }
-      const g = S.startGuiding(); if (g.error) log('Guiding: ' + g.error); else { set('Guiding settling…'); await S.waitSim(10); }
+      if (!n.guider.calibrated) { set('Calibrating guider…'); await S.waitSim(60); await S.calibrateGuider(); }
+      const g = await S.startGuiding(); if (g && g.error) log('Guiding: ' + g.error); else { set('Guiding settling…'); await S.waitSim(10); }
     }
     let sinceDither = 0, sinceAF = 0, afTemp = S.envAt(G.s.time).temp;
     for (let ri2 = 0; ri2 < seq.rows.length; ri2++) {
@@ -194,7 +194,7 @@ export async function runSequence(seq, log = () => {}) {
             set('Meridian flip…'); log('Performing meridian flip');
             S.stopGuiding('flip');
             await centerOn(tgt, log);
-            if (seq.opts.guide && ri.hasGuide && n.connected.guider) { S.startGuiding(); await S.waitSim(10); }
+            if (seq.opts.guide && ri.hasGuide && n.connected.guider) { await S.startGuiding(); await S.waitSim(10); }
           }
           if (ri.hasAF && n.connected.focuser && ((seq.opts.afEvery && sinceAF >= seq.opts.afEvery) || (seq.opts.afTemp && Math.abs(env.temp - afTemp) >= seq.opts.afTemp))) {
             set('Autofocus (temperature/interval)…'); await autofocus(() => {}, log); sinceAF = 0; afTemp = S.envAt(G.s.time).temp;
@@ -204,7 +204,7 @@ export async function runSequence(seq, log = () => {}) {
         // filter
         if (ri.hasWheel && row.filter) {
           const idx = ri.filters.indexOf(row.filter);
-          if (idx >= 0 && idx !== n.wheelPos) { set('Changing filter…'); n.wheelPos = idx; emit('wheel'); await S.waitSim(3); }
+          if (idx >= 0 && idx !== n.wheelPos) { set('Changing filter…'); await S.setProp('wheelPos', idx); await S.waitSim(3); }
         }
         set(`${row.type} ${row.done + 1}/${row.count} · ${row.exp}s`);
         const fr = await S.expose({ type: row.type, exp: row.exp, gain: row.gain, offset: row.offset, bin: row.bin, target: tgt ? tgt.name : (row.type === 'light' ? 'Untitled' : ''), save: true });

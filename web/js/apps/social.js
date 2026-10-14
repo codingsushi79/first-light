@@ -1,6 +1,6 @@
 // StarShare (publishing & judging), AstroMart (shop), Mail (mentor & quests), Settings
 import { h, toast, openApp, confirmDlg, dialog, select } from '../wm.js';
-import { G, on, off, emit, save, addMoney, fmtDate, fmtDur, idbGet, idbDel } from '../state.js';
+import { G, on, off, emit, save, addMoney, fmtDate, fmtDur, idbGet, idbDel, isSandbox } from '../state.js';
 import { GEAR, CAMERAS, OPTICS, MOUNTS, FILTERS, CORRECTORS, ACCESSORIES, LOC, money } from '../gear.js';
 import { cat } from '../catalog.js';
 import * as A from '../astro.js';
@@ -130,7 +130,7 @@ export const shareApp = {
         h('div', { class: 'small muted' }, `${GEAR[f.optic]?.name.split('(')[0] || ''} · ${GEAR[f.cam]?.name.split('(')[0] || ''} · ${fmtDur(f.integration)} · ${fmtDate(f.created, -4)}`));
       if (!p) {
         c.append(h('div', { class: 'small' }, `Self-assessment: `, h('b', {}, `${f.score.total}/100`)), h('ul', { class: 'small fb' }, ...f.score.feedback.slice(0, 4).map((x) => h('li', {}, x))),
-          h('div', { class: 'row' }, h('button', { class: 'btn primary small', onclick: () => { const post = publish(f.id); if (post) { toast(`Published "${f.title}". Likes will roll in over the next days.`, 'good'); updatePosts(); render(); } } }, 'Publish'),
+          h('div', { class: 'row' }, h('button', { class: 'btn primary small', onclick: () => { if (G.guest) { toast('Publishing works from your own save (you are a guest in this session).', 'warn'); return; } const post = publish(f.id); if (post) { toast(`Published "${f.title}". Likes will roll in over the next days.`, 'good'); updatePosts(); render(); } } }, 'Publish'),
             h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDlg('Delete', 'Delete this image?', 'Delete')) { G.s.finals = G.s.finals.filter((x) => x.id !== f.id); idbDel('final:' + f.id); idbDel('finalthumb:' + f.id); save(); render(); } } }, 'Delete')));
       } else {
         c.append(h('div', { class: 'ss-likes' }, `♥ ${p.likesNow}`, p.award && p.awardPaid ? h('span', { class: 'award' }, '🏆 ' + p.award) : null, h('span', { class: 'muted small' }, ` · score ${f.score.total}`)),
@@ -166,17 +166,17 @@ export const shopApp = {
     }
     function render() {
       nav.innerHTML = ''; list.innerHTML = '';
-      bal.innerHTML = `Balance<br><b>${money(G.s.money)}</b>`;
+      bal.innerHTML = isSandbox() ? 'Sandbox<br><b>∞</b><br><span class="small">Everything is unlocked.</span>' : G.guest ? 'Guest<br><b>—</b><br><span class="small">The host buys gear.</span>' : `Balance<br><b>${money(G.s.money)}</b>`;
       for (const [k, l] of cats) nav.append(h('div', { class: 'shop-cat' + (k === cur ? ' on' : ''), onclick: () => { cur = k; render(); } }, l));
       const items = cats.find((c) => c[0] === cur)[2];
       for (const g of items) {
         const owned = G.s.inventory.includes(g.id);
         const inRig = Object.values(G.s.rig).flat().includes(g.id);
         const sellPrice = Math.round(g.sell ?? g.price * 0.6);
-        const b = owned ? h('button', { class: 'btn small', disabled: inRig, title: inRig ? 'Currently mounted in your rig' : '', onclick: async () => {
+        const b = owned && (isSandbox() || G.guest) ? h('span', { class: 'muted small' }, inRig ? 'In use' : 'Owned') : owned ? h('button', { class: 'btn small', disabled: inRig, title: inRig ? 'Currently mounted in your rig' : '', onclick: async () => {
           if (await confirmDlg('Sell used', `Sell your ${g.name} for ${money(sellPrice)} on the used market?`, 'Sell')) { G.s.inventory = G.s.inventory.filter((x) => x !== g.id); addMoney(sellPrice, 'Sold ' + g.name); render(); }
         } }, inRig ? 'In use' : `Sell ${money(sellPrice)}`)
-          : h('button', { class: 'btn primary small', disabled: G.s.money < g.price, onclick: async () => {
+          : h('button', { class: 'btn primary small', disabled: G.s.money < g.price || G.guest, onclick: async () => {
             if (await confirmDlg('Buy', `Buy ${g.name} for ${money(g.price)}?`, 'Buy')) { addMoney(-g.price, 'Bought ' + g.name); G.s.inventory.push(g.id); emit('bought', g); toast(`📦 ${g.name} delivered! Mount it via Field view → Change gear.`, 'good', 6000); save(true); render(); }
           } }, money(g.price));
         list.append(h('div', { class: 'shop-item' + (owned ? ' owned' : '') }, h('div', { class: 'shop-ico', html: gearIcon(g) }),
@@ -262,8 +262,12 @@ export const settingsApp = {
       h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: s.nightMode, onchange: (e) => { s.nightMode = e.target.checked; document.body.classList.toggle('nightmode', s.nightMode); save(); } }), 'Red night-vision mode (preserves your dark adaptation)'),
       h('div', { class: 'row' }, h('span', {}, 'Simulation resolution'), select([[768, '768 px (fast)'], [1024, '1024 px (default)'], [1400, '1400 px (detailed, slower)']], s.quality, (v) => { s.quality = +v; save(); }), h('span', { class: 'muted small' }, 'Long side of rendered frames. Stacks need consistent resolution.'))));
     root.append(h('div', { class: 'card' }, h('h3', {}, 'About the simulation'), h('div', { class: 'small', html: `Sky imagery: <b>DSS2 color</b> & <b>Mellinger</b> surveys via CDS <i>hips2fits</i> (Université de Strasbourg/CNRS). Name resolving: CDS <b>Sesame</b> (SIMBAD/NED/VizieR). Stars, constellations & Milky Way: <b>d3-celestial</b> data (Hipparcos-based).<br><br>Each frame is simulated from photons up: aperture, transmission, QE, filter bandpass (Hα/OIII/SII are extracted from survey colors), sky brightness (Bortle level, Moon via Krisciunas–Schaefer, twilight, airmass), extinction, clouds, seeing, diffraction, defocus, coma/field curvature, vignetting & dust, tracking errors (polar misalignment drift, periodic error, wind, field rotation), shot noise, read noise, dark current & hot pixels, amp glow, bias banding, full-well & ADC clipping.` })));
-    root.append(h('div', { class: 'card' }, h('h3', {}, 'Save game'), h('div', { class: 'muted small' }, 'Progress is saved automatically in this browser.'),
-      h('button', { class: 'btn danger', onclick: async () => { if (await confirmDlg('Start over?', 'This erases all your gear, frames and images.', 'Erase everything')) { indexedDB.deleteDatabase('astrophoto-sim'); location.reload(); } } }, 'Reset game')));
+    if (G.s.gameMode === 'sandbox') root.append(h('div', { class: 'card' }, h('h3', {}, 'Sandbox'),
+      h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: !!(G.s.sandbox && G.s.sandbox.clearSkies), onchange: (e) => { G.s.sandbox = { ...(G.s.sandbox || {}), clearSkies: e.target.checked }; if (e.target.checked && G.s.night) G.s.night.wx.clouds = G.s.night.wx.clouds.map(() => 0); save(); } }), 'Always clear skies'),
+      h('div', { class: 'muted small' }, 'Gear: everything is in your inventory — swap it outside with R → Change gear.')));
+    root.append(h('div', { class: 'card' }, h('h3', {}, 'Save game'), h('div', { class: 'muted small' }, 'Progress is saved automatically.'),
+      h('div', { class: 'small' }, `Save: ${G.s.saveName || 'guest session'} · ${G.s.gameMode === 'sandbox' ? 'Sandbox' : 'Career'}`),
+      h('div', { class: 'muted small' }, 'Manage saves (new, load, delete) from the main menu: Pause (Esc) → Save & exit to main menu.')));
     return {};
   },
 };

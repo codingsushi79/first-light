@@ -7,10 +7,7 @@ import { GEAR, horizonAlt } from '../gear.js';
 import * as S from '../session.js';
 import * as RT from '../routines.js';
 
-export function setTarget(t) {
-  G.s.target = { id: t.id, name: t.name || t.id, ra: t.ra, dec: t.dec, size: t.size || 0, type: t.type || '' };
-  save(); emit('target', G.s.target);
-}
+export function setTarget(t) { S.setTarget(t); }
 
 export const planetariumApp = {
   title: 'SkyChart', width: 1080, height: 700, minW: 600, minH: 400,
@@ -242,7 +239,7 @@ export const planetariumApp = {
         fits ? kv('Fits in your FOV', fits >= 1 ? `yes (${(1 / fits * 100).toFixed(0)}% of short side)` : `no — ${(1 / fits).toFixed(1)}× too big`) : '',
         h('div', { class: 'row wrap', style: { marginTop: '8px' } },
           h('button', { class: 'btn primary small', onclick: () => { setTarget(sel); toast(`Target set: ${sel.name}`); } }, '★ Set target'),
-          h('button', { class: 'btn small', disabled: !S.canGoto(), title: S.canGoto() ? '' : 'Needs a connected GoTo mount', onclick: () => { const r = S.gotoRaDec(sel.ra, sel.dec, sel.name); if (r.error) toast(r.error, 'warn'); } }, 'Slew'),
+          h('button', { class: 'btn small', disabled: !S.canGoto(), title: S.canGoto() ? '' : 'Needs a connected GoTo mount', onclick: async () => { const r = await S.gotoRaDec(sel.ra, sel.dec, sel.name); if (r && r.error) toast(r.error, 'warn'); } }, 'Slew'),
           h('button', { class: 'btn small', disabled: !S.night(), onclick: async () => { setTarget(sel); RT.R.abort = false; try { await RT.centerOn(G.s.target, (m) => S.log(m)); toast('Centered ' + sel.name); } catch (e) { toast(e.message, 'warn'); } } }, 'Slew & center'),
           h('button', { class: 'btn small', onclick: () => { setTarget(sel); openApp('framing', G.s.target); } }, 'Framing…')));
     }

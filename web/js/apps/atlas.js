@@ -72,7 +72,7 @@ export const atlasApp = {
       const n = S.night();
       const go = h('button', { class: 'btn primary big', disabled: !!n || G.s.money < loc.travel, onclick: async () => {
         if (!(await confirmDlg('Travel', `Travel to ${loc.name}${loc.travel ? ' for ' + money(loc.travel) : ''} and set up tonight?`, 'Go'))) return;
-        const r = S.startNight(loc.id); if (r.error) toast(r.error, 'warn'); else { toast(`Arrived at ${loc.name}. Setting up as the sun goes down…`); emit('wentOut'); }
+        const r = await S.startNight(loc.id); if (r.error) toast(r.error, 'warn'); else { toast(`Arrived at ${loc.name}. Setting up as the sun goes down…`); emit('wentOut'); }
       } }, n ? 'Already out observing' : G.s.money < loc.travel ? `Need ${money(loc.travel)}` : `🌙 Go observe here tonight`);
       card.append(h('div', { class: 'row wrap', style: { marginTop: '8px' } }, go, h('button', { class: 'btn', onclick: () => { G.s.wxLoc = loc.id; save(); toast('Selected in the Weather app.'); } }, 'Show forecast')));
       return card;

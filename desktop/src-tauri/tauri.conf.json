@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "First Light — Astrophotography Simulator",
+        "title": "First Light \u2014 Astrophotography Simulator",
         "width": 1440,
         "height": 900,
         "minWidth": 1100,
@@ -22,13 +22,25 @@
         "fullscreen": false
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null
+    },
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "nsis"],
+    "targets": [
+      "app",
+      "nsis"
+    ],
     "category": "Game",
     "shortDescription": "Astrophotography simulator",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   }
 }

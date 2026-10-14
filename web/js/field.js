@@ -8,52 +8,66 @@ import * as S from './session.js';
 import { canvasFromRGBA } from './components.js';
 import { cat } from './catalog.js';
 import { World } from './world3d.js';
+import { createHud } from './hud.js';
+import { MP } from './mp.js';
 
-let root = null, panel = null, worldEl = null, hud = null, label = null, visible = false, world = null, panelOpen = false;
+let root = null, panel = null, worldEl = null, hud = null, visible = false, world = null, panelOpen = false, hudTimer = null;
 const unsub = [];
 const draw = () => {};
 
-export function initField(container) {
+export function initField(container, cb) {
   root = h('div', { class: 'field-root', style: { display: 'none' } });
   worldEl = h('div', { class: 'world' });
   panel = h('div', { class: 'field-panel', style: { display: 'none' } });
-  label = h('div', { class: 'xhair-label' });
-  hud = h('div', { class: 'hud' },
-    h('div', { class: 'xhair' }), label,
-    h('div', { class: 'hud-hint' }, 'Click to look around (Esc frees the mouse) · WASD walk · E interact · R rig controls · F red headlamp · Tab laptop'));
-  root.append(worldEl, hud, panel);
+  root.append(worldEl, panel);
   container.append(root);
+  hud = createHud(root, cb);
+  hud.setPrompt('');
+  window.addEventListener('keydown', (e) => {
+    if (!visible || (e.target.matches && e.target.matches('input,select,textarea'))) return;
+    if (e.key === 'Enter') { e.preventDefault(); hud.openChat(); }
+    if (e.key === 'F2') { e.preventDefault(); document.body.classList.toggle('hud-off'); }
+    if (e.key === ',' || e.key === '<') cb.onWarp(-1);
+    if (e.key === '.' || e.key === '>') cb.onWarp(1);
+  });
+}
+export function getPose() {
+  if (!world) return null;
+  const P = world.player;
+  return { pos: [+P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2)], yaw: +P.yaw.toFixed(3), pitch: +P.pitch.toFixed(3), at: visible ? 'outside' : 'laptop', lamp: !!world.flashlight };
 }
 function ensureWorld() {
   if (world) return world;
   world = new World(worldEl); window.__world = world;
-  world.on('hover', (a) => { label.textContent = hoverText(a); label.style.display = a ? '' : 'none'; });
+  if (MP.role === 'client') { world.player.pos.set(-1.4 - Math.random(), 1.65, 1.2 + Math.random()); world.player.yaw = -0.4; } // don't spawn inside the host
+  world.on('hover', (a) => hud.setPrompt(hoverText(a)));
   world.on('action', (a) => doAction(a));
   world.on('panel', () => togglePanel());
-  world.on('grab', (g) => { label.style.display = g ? '' : 'none'; label.textContent = g ? 'Aiming by hand — look where the rig should point · E / click to lock it' : ''; root.classList.toggle('grabbing', g); });
+  world.on('grab', (g) => { hud.setPrompt(g ? 'AIMING BY HAND — LOOK WHERE THE RIG SHOULD POINT · E / CLICK TO LOCK' : ''); hud.setGrab(g); root.classList.toggle('grabbing', g); });
+  on('mpplayers', (pl) => world.setRemotePlayers(Object.values(pl).filter((p) => p.id !== MP.myId)));
   return world;
 }
 function manualMount() { const m = GEAR[G.s.rig.mount]; return !m.goto; }
 function hoverText(a) {
   const n = G.s.night; if (!a || !n) return '';
   switch (a) {
-    case 'laptop': return '[E] Sit down at the laptop';
-    case 'cap': return '[E] Remove the lens cap';
-    case 'bahtinov': return '[E] Take off the Bahtinov mask';
-    case 'dew': return n.dew > 0.05 || (n.smudge || 0) > 0.05 ? '[E] Deal with the dew on the optics' : rigInfo(G.s.rig).hasDew ? `[E] Turn dew heater ${n.dewHeater ? 'off' : 'on'}` : 'Dew strap';
-    case 'focus': return '[E] Focus by hand';
-    case 'polar': return GEAR[G.s.rig.mount].polarScope ? '[E] Look through the polar scope / adjust bolts' : '[E] Polar alignment bolts';
-    case 'camera': return '[E] Camera (rotate / settings)';
-    default: return manualMount() ? (GEAR[G.s.rig.mount].type === 'fixed' ? '[E] Loosen the ball head and aim the camera' : '[E] Unlock the clutch and aim by hand') : '[E] Hand controller';
+    case 'laptop': return 'E  SIT DOWN AT THE LAPTOP';
+    case 'cap': return 'E  REMOVE THE LENS CAP';
+    case 'bahtinov': return 'E  TAKE OFF THE BAHTINOV MASK';
+    case 'dew': return n.dew > 0.05 || (n.smudge || 0) > 0.05 ? 'E  DEAL WITH THE DEW ON THE OPTICS' : rigInfo(G.s.rig).hasDew ? `E  TURN DEW HEATER ${n.dewHeater ? 'OFF' : 'ON'}` : 'DEW STRAP';
+    case 'focus': return 'E  FOCUS BY HAND';
+    case 'polar': return GEAR[G.s.rig.mount].polarScope ? 'E  POLAR SCOPE / ALIGNMENT BOLTS' : 'E  POLAR ALIGNMENT BOLTS';
+    case 'camera': return 'E  CAMERA (ROTATE)';
+    default: return manualMount() ? (GEAR[G.s.rig.mount].type === 'fixed' ? 'E  LOOSEN THE BALL HEAD AND AIM' : 'E  UNLOCK THE CLUTCH AND AIM BY HAND') : 'E  HAND CONTROLLER';
   }
 }
 function doAction(a) {
   const n = G.s.night; if (!n) return;
   const ri = rigInfo(G.s.rig);
   if (a === 'laptop') return sitDown();
-  if (a === 'cap') { n.capOn = false; toast('Lens cap removed. (Keep it handy for dark frames!)', 'info', 2500); save(); return; }
-  if (a === 'bahtinov') { n.bahtinov = false; toast('Bahtinov mask removed.', 'info', 2000); return; }
-  if (a === 'dew') { if (n.dew > 0.05 || (n.smudge || 0) > 0.05 || !ri.hasDew) return openPanel('optics'); if (ri.hasDew) { n.dewHeater = !n.dewHeater; toast(`Dew heater ${n.dewHeater ? 'on' : 'off'}.`, 'info', 1800); } return; }
+  if (a === 'cap') { S.setProp('capOn', false); toast('Lens cap removed. (Keep it handy for dark frames!)', 'info', 2500); save(); return; }
+  if (a === 'bahtinov') { S.setProp('bahtinov', false); toast('Bahtinov mask removed.', 'info', 2000); return; }
+  if (a === 'dew') { if (n.dew > 0.05 || (n.smudge || 0) > 0.05 || !ri.hasDew) return openPanel('optics'); if (ri.hasDew) { S.setProp('dewHeater', !n.dewHeater); toast(`Dew heater ${n.dewHeater ? 'on' : 'off'}.`, 'info', 1800); } return; }
   if (a === 'focus') return openPanel('focus');
   if (a === 'polar') return openPanel('polar');
   if (a === 'camera') return openPanel('rotation');
@@ -100,6 +114,7 @@ export function showField() {
   if (!G.s.night) { toast('You are at home. Use the Weather app to head out for a night of imaging.', 'info'); return; }
   visible = true; root.style.display = '';
   ensureWorld(); world.resize(); world.start();
+  clearInterval(hudTimer); hud.update(); hudTimer = setInterval(() => hud.update(), 250);
   document.body.classList.add('in-field');
   const t = () => { if (visible && panelOpen) refreshLive(); };
   let last = 0; const tick = () => { const n = performance.now(); if (n - last > 250) { last = n; t(); } };
@@ -109,7 +124,7 @@ export function showField() {
   emit('fieldshown', true);
 }
 export function hideField() {
-  visible = false; if (root) root.style.display = 'none';
+  visible = false; if (root) root.style.display = 'none'; clearInterval(hudTimer);
   if (world) { world.stop(); world.setGrab(false); }
   unsub.splice(0).forEach((u) => u());
   document.body.classList.remove('in-field');
@@ -130,20 +145,20 @@ function buildPanel() {
     ...ri.warnings.map((w) => h('div', { class: 'warnline small' }, '⚠ ' + w)),
     h('button', { class: 'btn small', onclick: () => changeGear() }, 'Change gear…'));
   if (ri.isLens) {
-    if (ri.opt.zoom) rigSec.append(h('div', { class: 'row' }, h('span', { class: 'small' }, 'Zoom ring'), h('input', { type: 'range', min: ri.opt.zoom[0], max: ri.opt.zoom[1], step: 1, value: Math.round(ri.focal), oninput: (e) => { G.s.rig.zoom = +e.target.value; zl.textContent = `${e.target.value}mm`; S.night().focus.best0 += 0; }, onchange: () => { save(); buildPanel(); } }), (zl => zl)(h('b', { class: 'small' }, `${Math.round(ri.focal)}mm`))));
-    rigSec.append(h('div', { class: 'row' }, h('span', { class: 'small' }, 'Aperture ring'), select(ri.opt.stops.filter((s) => s >= lensFMin(ri.opt, ri.focal) - 0.01).map((s) => [s, 'f/' + s]), ri.fstop, (v) => { G.s.rig.fstop = +v; save(); buildPanel(); })));
+    if (ri.opt.zoom) rigSec.append(h('div', { class: 'row' }, h('span', { class: 'small' }, 'Zoom ring'), h('input', { type: 'range', min: ri.opt.zoom[0], max: ri.opt.zoom[1], step: 1, value: Math.round(ri.focal), oninput: (e) => { zl.textContent = `${e.target.value}mm`; }, onchange: (e) => { S.setRig({ ...G.s.rig, zoom: +e.target.value }); buildPanel(); } }), (zl => zl)(h('b', { class: 'small' }, `${Math.round(ri.focal)}mm`))));
+    rigSec.append(h('div', { class: 'row' }, h('span', { class: 'small' }, 'Aperture ring'), select(ri.opt.stops.filter((s) => s >= lensFMin(ri.opt, ri.focal) - 0.01).map((s) => [s, 'f/' + s]), ri.fstop, (v) => { S.setRig({ ...G.s.rig, fstop: +v }); buildPanel(); })));
   }
   const zl = rigSec.querySelector('b.small');
   panel.append(rigSec);
   // covers & accessories
-  const capBtn = h('button', { class: 'btn ' + (n.capOn ? 'danger' : ''), onclick: () => { n.capOn = !n.capOn; if (!n.capOn) n.bahtinov = n.bahtinov; toast(n.capOn ? 'Lens cap on.' : 'Lens cap removed.', 'info', 1500); buildPanel(); draw(); save(); } }, n.capOn ? '🔴 Lens cap is ON — remove' : 'Put lens cap on');
+  const capBtn = h('button', { class: 'btn ' + (n.capOn ? 'danger' : ''), onclick: () => { S.setProp('capOn', !n.capOn); toast(n.capOn ? 'Lens cap on.' : 'Lens cap removed.', 'info', 1500); buildPanel(); draw(); } }, n.capOn ? '🔴 Lens cap is ON — remove' : 'Put lens cap on');
   const acc = [capBtn];
-  if (ri.hasBahtinov) acc.push(h('button', { class: 'btn' + (n.bahtinov ? ' on' : ''), onclick: () => { n.bahtinov = !n.bahtinov; buildPanel(); draw(); } }, n.bahtinov ? 'Remove Bahtinov mask' : 'Put on Bahtinov mask'));
-  if (ri.hasDew) acc.push(h('button', { class: 'btn' + (n.dewHeater ? ' on' : ''), onclick: () => { n.dewHeater = !n.dewHeater; buildPanel(); draw(); } }, n.dewHeater ? 'Dew heater: ON' : 'Dew heater: off'));
-  if (ri.hasPanel) acc.push(h('button', { class: 'btn' + (n.panelOn ? ' on' : ''), onclick: () => { n.panelOn = !n.panelOn; buildPanel(); } }, n.panelOn ? 'Flat panel ON (on aperture)' : 'Flat panel off'));
+  if (ri.hasBahtinov) acc.push(h('button', { class: 'btn' + (n.bahtinov ? ' on' : ''), onclick: () => { S.setProp('bahtinov', !n.bahtinov); buildPanel(); draw(); } }, n.bahtinov ? 'Remove Bahtinov mask' : 'Put on Bahtinov mask'));
+  if (ri.hasDew) acc.push(h('button', { class: 'btn' + (n.dewHeater ? ' on' : ''), onclick: () => { S.setProp('dewHeater', !n.dewHeater); buildPanel(); draw(); } }, n.dewHeater ? 'Dew heater: ON' : 'Dew heater: off'));
+  if (ri.hasPanel) acc.push(h('button', { class: 'btn' + (n.panelOn ? ' on' : ''), onclick: () => { S.setProp('panelOn', !n.panelOn); buildPanel(); } }, n.panelOn ? 'Flat panel ON (on aperture)' : 'Flat panel off'));
   const hasDryer = G.s.inventory.includes('hairdryer');
-  live.dryBtn = h('button', { class: 'btn', disabled: !hasDryer, title: hasDryer ? '' : 'Buy one in AstroMart → Accessories', onclick: () => { const r = S.useHairDryer(); if (r.error) toast(r.error, 'warn'); else { toast(`Blowing warm air on the optics… (~${Math.round(r.secs)}s)${S.T.exposure ? ' — careful, that shakes the rig mid-exposure!' : ''}`, 'info', 3500); } refreshLive(); } }, hasDryer ? '🌬 Blow hair dryer on the optics' : '🌬 Hair dryer (not owned)');
-  const wipeBtn = h('button', { class: 'btn', onclick: () => { const r = S.wipeOptics(); toast(`Wiped with your sleeve. Dew gone — but you left a smudge (${Math.round(r.smudge * 100)}%): expect glowing halos around bright stars until you clean the lens at home.`, 'warn', 6000); refreshLive(); draw(); } }, '🧥 Wipe with your sleeve');
+  live.dryBtn = h('button', { class: 'btn', disabled: !hasDryer, title: hasDryer ? '' : 'Buy one in AstroMart → Accessories', onclick: async () => { const r = await S.useHairDryer(); if (r.error) toast(r.error, 'warn'); else { toast(`Blowing warm air on the optics… (~${Math.round(r.secs)}s)${S.T.exposure ? ' — careful, that shakes the rig mid-exposure!' : ''}`, 'info', 3500); } refreshLive(); } }, hasDryer ? '🌬 Blow hair dryer on the optics' : '🌬 Hair dryer (not owned)');
+  const wipeBtn = h('button', { class: 'btn', onclick: async () => { const r = await S.wipeOptics(); if (r.error) { toast(r.error, 'warn'); return; } toast(`Wiped with your sleeve. Dew gone — but you left a smudge (${Math.round(r.smudge * 100)}%): expect glowing halos around bright stars until you clean the lens at home.`, 'warn', 6000); refreshLive(); draw(); } }, '🧥 Wipe with your sleeve');
   acc.push(live.dryBtn, wipeBtn);
   live.dew = h('div', { class: 'small muted' });
   panel.append(tagSec(sec('On the optics', h('div', { class: 'col' }, ...acc), live.dew), 'optics'));
@@ -165,8 +180,8 @@ function buildPanel() {
     h('span', {}), h('button', { class: 'btn', onclick: mv(0, -1) }, lab[1]), h('span', {}));
   aimSec.append(h('div', { class: 'row' }, stepSel), pad);
   if (mount.type !== 'fixed') {
-    aimSec.append(h('button', { class: 'btn' + (n.mount.tracking ? ' on' : ''), onclick: () => { if (mount.goto && n.mount.parked) { toast('Unpark first.', 'warn'); return; } S.setTracking(!n.mount.tracking); buildPanel(); } }, n.mount.tracking ? '⏺ Tracking ON (sidereal)' : 'Tracking OFF — switch on'));
-    if (mount.goto) aimSec.append(h('button', { class: 'btn', onclick: () => { n.mount.parked ? S.unpark() : S.park(); buildPanel(); } }, n.mount.parked ? 'Unpark mount' : 'Park mount'));
+    aimSec.append(h('button', { class: 'btn' + (n.mount.tracking ? ' on' : ''), onclick: async () => { if (mount.goto && n.mount.parked) { toast('Unpark first.', 'warn'); return; } await S.setTracking(!n.mount.tracking); buildPanel(); } }, n.mount.tracking ? '⏺ Tracking ON (sidereal)' : 'Tracking OFF — switch on'));
+    if (mount.goto) aimSec.append(h('button', { class: 'btn', onclick: async () => { await (n.mount.parked ? S.unpark() : S.park()); buildPanel(); } }, n.mount.parked ? 'Unpark mount' : 'Park mount'));
   }
   aimSec.append(h('div', { class: 'small muted' }, mount.goto ? 'Use the laptop (SkyChart / AstroCap) for GoTo and plate-solve centering.' : 'Walk to the rig and press E to grab it, then look where it should point. Fine-tune here while looping exposures on the laptop.'));
   live.aim = h('div', { class: 'small' }); aimSec.append(live.aim);
@@ -303,28 +318,7 @@ async function changeGear() {
   applyRig(rig);
 }
 export function applyRig(rig) {
-  const old = G.s.rig; G.s.rig = rig;
-  const n = G.s.night;
-  if (n) {
-    const ri = rigInfo(rig);
-    if (old.mount !== rig.mount) {
-      const m = GEAR[rig.mount];
-      n.mount.tracking = false; n.mount.parked = m.goto; n.mount.slew = null; n.mount.flipped = false; n.mount.synced = false;
-      n.mount.pa = m.type === 'eq' ? { alt: (Math.random() - 0.5) * 140, az: (Math.random() - 0.5) * 260 } : { alt: 0, az: 0 };
-      const p = S.pointing();
-      if (m.type === 'eq') { n.mount.frame = 'hadec'; n.mount.ha = -90; n.mount.dec = 89.9 * Math.sign(S.locNow().lat); }
-      else { n.mount.frame = 'altaz'; n.mount.alt = p ? p.alt : 30; n.mount.az = p ? p.az : 180; }
-      n.mount.roll = 0; n.connected.mount = false; n.connected.guider = false; n.guider = { calibrated: false, guiding: false, looping: false, rms: 0, lost: false, settleUntil: 0 };
-    }
-    if (old.optic !== rig.optic || old.corrector !== rig.corrector || old.camera !== rig.camera) {
-      const isLens = GEAR[rig.optic].type === 'lens';
-      n.focus = isLens ? { pos: 270, best0: 259 + Math.random() * 6, unit: 'deg', min: 0, max: 270 } : { pos: Math.round(5000 + (Math.random() - 0.5) * 2400), best0: 5000 + (Math.random() - 0.5) * 600, unit: 'steps', min: 0, max: 10000 };
-      n.connected.camera = false; n.connected.focuser = false; n.connected.wheel = false;
-    }
-    if (!ri.hasGuide) n.connected.guider = false;
-    S.log('Rig changed — reconnect devices in AstroCap.');
-  }
-  save(); emit('rig', rig); emit('devices');
+  S.setRig(rig);
   if (visible) { buildPanel(); draw(); }
 }
 void FILTERS; void dialog;

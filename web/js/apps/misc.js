@@ -33,10 +33,10 @@ export const guideApp = {
         h('button', { class: 'btn', disabled: !conn || n.guider.guiding, onclick: async () => {
           if (!n.mount.tracking) { toast('Start tracking first.', 'warn'); return; }
           status.textContent = 'Calibrating… (moving the mount in RA and Dec)'; btns.querySelectorAll('button').forEach((b) => (b.disabled = true));
-          try { await S.waitSim(60); n.guider.calibrated = true; status.textContent = 'Calibration complete.'; S.log('Guider calibrated.'); } catch (e) { status.textContent = e.message; }
+          try { await S.waitSim(60); await S.calibrateGuider(); status.textContent = 'Calibration complete.'; } catch (e) { status.textContent = e.message; }
           render();
         } }, n.guider.calibrated ? 'Re-calibrate' : 'Calibrate'),
-        h('button', { class: 'btn ' + (n.guider.guiding ? 'danger' : 'primary'), disabled: !conn, onclick: () => { if (n.guider.guiding) S.stopGuiding('user'); else { const r = S.startGuiding(); if (r.error) toast(r.error, 'warn'); } render(); } }, n.guider.guiding ? '■ Stop guiding' : '◎ Guide'),
+        h('button', { class: 'btn ' + (n.guider.guiding ? 'danger' : 'primary'), disabled: !conn, onclick: async () => { if (n.guider.guiding) await S.stopGuiding('user'); else { const r = await S.startGuiding(); if (r && r.error) toast(r.error, 'warn'); } render(); } }, n.guider.guiding ? '■ Stop guiding' : '◎ Guide'),
         h('button', { class: 'btn', disabled: !n.guider.guiding, onclick: () => { S.dither(8); toast('Dithered.'); } }, 'Dither'));
       if (!status.textContent || status.textContent === 'Not observing.') status.textContent = conn ? (n.guider.calibrated ? 'Ready.' : 'Connected. Calibrate before guiding.') : 'Disconnected.';
       if (GEAR[G.s.rig.mount].guideAxes === 'ra') status.textContent += ' (Tracker: RA-only guiding via ST-4 — declination drift is not corrected.)';
@@ -239,7 +239,7 @@ export const weatherApp = {
       } else {
         const hr = localParts(G.s.time, home.tz).h;
         act.append(h('div', {}, `It’s ${fmtDate(G.s.time, home.tz)}, ${fmtTime(G.s.time, home.tz)}. `, hr >= 4 ? 'Tonight’s forecast for this site is below.' : ''),
-          h('button', { class: 'btn primary big', onclick: () => { const r = S.startNight(locId); if (r.error) toast(r.error, 'warn'); else { toast(`Driving to ${loc.name}… you set up as the sun goes down.`); emit('wentOut'); } } }, `🌙 Head out tonight → ${loc.name}${loc.travel ? ' (' + money(loc.travel) + ')' : ''}`),
+          h('button', { class: 'btn primary big', onclick: async () => { const r = await S.startNight(locId); if (r.error) toast(r.error, 'warn'); else { toast(`Driving to ${loc.name}… you set up as the sun goes down.`); emit('wentOut'); } } }, `🌙 Head out tonight → ${loc.name}${loc.travel ? ' (' + money(loc.travel) + ')' : ''}`),
           h('button', { class: 'btn', onclick: async () => { if (await confirmDlg('Skip a day?', 'Stay in tonight and skip to tomorrow?', 'Skip')) S.skipDay(); render(); } }, 'Stay in, skip to tomorrow'));
       }
       content.append(act);

@@ -308,3 +308,83 @@ body.in-field .toasts { right: 344px; }
 .at-item:hover { background: #ffffff0a; }
 .at-b { border-radius: 5px; text-align: center; font-weight: 700; font-size: 11px; color: #000; }
 .at-b.b1, .at-b.b2 { background: #5cf08f; } .at-b.b3, .at-b.b4 { background: #b6e05c; } .at-b.b5, .at-b.b6 { background: #ffc34d; } .at-b.b7, .at-b.b8, .at-b.b9 { background: #ff6464; }
+
+/* =====================================================================
+   AstroOS 26 — macOS Tahoe "Liquid Glass" look for the laptop UI
+   ===================================================================== */
+#os { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+  background:
+    radial-gradient(1100px 620px at 18% 110%, #2a6fdb 0%, transparent 60%),
+    radial-gradient(900px 600px at 85% 95%, #7b3fe4 0%, transparent 55%),
+    radial-gradient(1200px 700px at 60% -10%, #0e5a8a 0%, transparent 60%),
+    linear-gradient(160deg, #0a1636 0%, #10204a 40%, #1b1446 100%); }
+#os::before { opacity: .55; }
+:root { --glass: rgba(30, 32, 40, 0.62); --glass-hi: rgba(255, 255, 255, 0.14); --glass-line: rgba(255, 255, 255, 0.16); --mac-blue: #0a84ff; }
+
+/* menubar: transparent, floating text */
+.menubar { height: 30px; background: rgba(0, 0, 0, 0.12); backdrop-filter: blur(20px) saturate(1.6); -webkit-backdrop-filter: blur(20px) saturate(1.6); border-bottom: none; font-size: 13px; gap: 14px; padding: 0 14px; text-shadow: 0 1px 2px rgba(0,0,0,.35); }
+.mb-logo { cursor: default; display: flex; align-items: center; margin-right: 2px; padding: 2px 6px; border-radius: 6px; }
+.mb-logo:hover, .mb-menus span:hover { background: rgba(255,255,255,.16); }
+.mb-glyph { display: flex; }
+.mb-app { font-weight: 700; }
+.mb-menus { display: flex; gap: 2px; color: rgba(255,255,255,.88); }
+.mb-menus span { padding: 2px 8px; border-radius: 6px; cursor: default; }
+.mb-pill { border: none; border-radius: 999px; padding: 3px 12px; background: rgba(255,255,255,.18); color: #fff; font-weight: 600; font-size: 12px; cursor: pointer; }
+.mb-pill:hover { background: rgba(255,255,255,.28); }
+.mb-pill.look { background: var(--mac-blue); }
+.chip { background: rgba(255,255,255,.1); border: none; border-radius: 999px; padding: 1px 9px; color: rgba(255,255,255,.9); }
+.mb-warp { background: rgba(255,255,255,.1); border-radius: 999px; padding: 2px; }
+.mb-w { border-radius: 999px; }
+.mb-w.on { background: rgba(255,255,255,.9); color: #000; }
+.mb-icon { background: none; border: none; cursor: pointer; padding: 2px 4px; display: flex; align-items: center; }
+.red-dot { width: 12px; height: 12px; border-radius: 50%; background: #ff3b30; box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
+.mb-coop { color: #8fd3ff; font-weight: 600; }
+.mb-money { color: #b7f5cd; }
+.mb-drop { position: fixed; z-index: 300000; min-width: 230px; padding: 5px; border-radius: 12px; background: rgba(40, 42, 52, 0.72); backdrop-filter: blur(30px) saturate(1.8); -webkit-backdrop-filter: blur(30px) saturate(1.8); border: 1px solid var(--glass-line); box-shadow: 0 18px 50px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.12); font-family: -apple-system, system-ui, sans-serif; font-size: 13px; }
+.mb-item { display: flex; justify-content: space-between; padding: 5px 10px; border-radius: 7px; cursor: default; }
+.mb-item:hover { background: var(--mac-blue); }
+.mb-item.dis { opacity: .4; } .mb-item.dis:hover { background: none; }
+.mb-key { color: rgba(255,255,255,.55); }
+.mb-sep { height: 1px; background: rgba(255,255,255,.12); margin: 5px 8px; }
+
+/* windows: rounded glass with a unified title bar */
+.win { border-radius: 22px; background: var(--glass); backdrop-filter: blur(40px) saturate(1.7); -webkit-backdrop-filter: blur(40px) saturate(1.7);
+  border: 1px solid var(--glass-line); box-shadow: 0 30px 80px rgba(0,0,0,.5), 0 0 0 .5px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.14); }
+.win.focused { border-color: rgba(255,255,255,.22); box-shadow: 0 40px 100px rgba(0,0,0,.6), 0 0 0 .5px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.18); }
+.win:not(.focused) { opacity: .97; }
+.win-title { height: 44px; background: transparent; border-bottom: 1px solid rgba(255,255,255,.06); padding: 0 16px; }
+.win-title-text { font-weight: 600; font-size: 13px; color: rgba(255,255,255,.92); }
+.win-btns { gap: 8px; }
+.wb { width: 13px; height: 13px; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.25); }
+.win-body { background: rgba(14, 16, 22, 0.55); }
+
+/* dock: floating glass */
+.dock { bottom: 10px; padding: 8px 10px; gap: 8px; border-radius: 30px; background: rgba(255,255,255,.14); backdrop-filter: blur(30px) saturate(1.9); -webkit-backdrop-filter: blur(30px) saturate(1.9);
+  border: 1px solid rgba(255,255,255,.28); box-shadow: 0 20px 50px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.35), inset 0 -1px 0 rgba(255,255,255,.08); }
+.dock-item { width: 52px; transition: transform .18s cubic-bezier(.2,.8,.2,1); }
+.dock-item:hover { transform: translateY(-6px) scale(1.14); }
+.dock-icon svg { width: 52px; height: 52px; filter: drop-shadow(0 4px 8px rgba(0,0,0,.35)); }
+.dock-label { background: rgba(40,42,52,.8); backdrop-filter: blur(20px); border: 1px solid var(--glass-line); border-radius: 8px; bottom: 66px; padding: 3px 10px; font-size: 12px; }
+.dock-item.running::after { bottom: -6px; background: rgba(255,255,255,.85); }
+
+/* controls */
+.btn { border-radius: 999px; border: none; background: rgba(255,255,255,.12); color: #fff; padding: 6px 14px; font-weight: 500; box-shadow: inset 0 1px 0 rgba(255,255,255,.12); }
+.btn:hover:not(:disabled) { background: rgba(255,255,255,.2); }
+.btn.primary { background: var(--mac-blue); box-shadow: inset 0 1px 0 rgba(255,255,255,.25); }
+.btn.primary:hover:not(:disabled) { background: #2b95ff; }
+.btn.danger { background: rgba(255,69,58,.22); color: #ffb3ad; }
+.btn.on { background: rgba(48,209,88,.28); color: #c9ffd8; }
+.inp, select.inp { border-radius: 8px; background: rgba(0,0,0,.25); border: 1px solid rgba(255,255,255,.12); }
+.card { border-radius: 16px; background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.08); }
+.tabs { background: transparent; border-bottom: none; justify-content: center; padding: 8px 10px 6px; }
+.tabs .tab { border-radius: 999px; padding: 5px 14px; margin: 0 1px; border: none !important; }
+.tabs { gap: 0; } .tabs .tab:hover { background: rgba(255,255,255,.08); }
+.tabs .tab.on { background: rgba(255,255,255,.18); color: #fff; margin-bottom: 0; }
+.widget { border-radius: 22px; background: rgba(30,32,40,.45); backdrop-filter: blur(30px) saturate(1.7); border: 1px solid var(--glass-line); box-shadow: inset 0 1px 0 rgba(255,255,255,.14); }
+.viewer { border-radius: 12px; }
+.toast { border-radius: 16px; border: 1px solid var(--glass-line); border-left: 1px solid var(--glass-line); background: rgba(40,42,52,.72); backdrop-filter: blur(30px) saturate(1.8); box-shadow: 0 16px 40px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.12); padding: 11px 14px; }
+.toast.warn { box-shadow: inset 3px 0 0 #ffb547, 0 16px 40px rgba(0,0,0,.4); } .toast.bad { box-shadow: inset 3px 0 0 #ff453a, 0 16px 40px rgba(0,0,0,.4); } .toast.good { box-shadow: inset 3px 0 0 #30d158, 0 16px 40px rgba(0,0,0,.4); }
+.modal { border-radius: 22px; background: rgba(36,38,48,.78); backdrop-filter: blur(40px) saturate(1.7); border: 1px solid var(--glass-line); box-shadow: 0 40px 100px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.14); }
+.modal-title { padding: 18px 20px 0; } .modal-body { padding: 12px 20px; } .modal-btns { padding: 12px 20px 18px; }
+.files-tree, .st-left, .mail-list, .shop-side { background: rgba(255,255,255,.035); }
+.pl-info, .pl-results { border-radius: 14px; background: rgba(20,22,30,.78); backdrop-filter: blur(24px); }

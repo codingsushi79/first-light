@@ -16,7 +16,7 @@ export const rig = () => rigInfo(G.s.rig);
 export function locNow() { return LOC[G.s.location]; }
 
 // ------------------------------------------------------------------ night lifecycle
-export function startNight(locId) {
+function _startNight(locId) {
   const loc = LOC[locId];
   if (G.s.money < loc.travel) return { error: `You need $${loc.travel} for travel.` };
   if (loc.travel) addMoney(-loc.travel, `Travel to ${loc.name}`);
@@ -29,7 +29,8 @@ export function startNight(locId) {
   const start = (ev.sunStart || noon + 6 * 3600000) - 25 * 60000;
   G.s.time = Math.max(G.s.time, start);
   const wx = actualWeather(locId, dayIndex);
-  if (G.s.stats.nights === 0) { wx.clouds = wx.clouds.map((c) => +(c * 0.08).toFixed(2)); wx.transp = wx.transp.map((t) => Math.max(t, 0.8)); } // a kind first night
+  if (G.s.gameMode === 'sandbox' && G.s.sandbox && G.s.sandbox.clearSkies) { wx.clouds = wx.clouds.map(() => 0); wx.transp = wx.transp.map((t) => Math.max(t, 0.85)); }
+  else if (G.s.stats.nights === 0) { wx.clouds = wx.clouds.map((c) => +(c * 0.08).toFixed(2)); wx.transp = wx.transp.map((t) => Math.max(t, 0.8)); } // a kind first night
   const r = mulberry32(hashStr('setup' + dayIndex + locId + G.s.stats.nights));
   const ri = rig();
   const mount = GEAR[G.s.rig.mount];
@@ -65,7 +66,7 @@ function initialFocus(ri, r) {
   return { pos: Math.round(5000 + (r() - 0.5) * 2400), best0: 5000 + (r() - 0.5) * 600, unit: 'steps', min: 0, max: 10000 };
 }
 
-export function endNight(reason = '') {
+function _endNight(reason = '') {
   const n = night(); if (!n) return;
   abortExposure();
   const loc = locNow();
@@ -81,7 +82,7 @@ export function endNight(reason = '') {
   save(true);
 }
 
-export function skipDay() {
+function _skipDay() {
   if (G.s.mode !== 'day') return;
   G.s.time += 86400000;
   emit('newday', {}); emit('tick', 0); save();
@@ -163,7 +164,7 @@ function setRaDec(ra, dec, ms = G.s.time) {
   else { const aa = A.radec2altaz(ra, dec, L, loc.lat); m.alt = aa.alt; m.az = aa.az; }
 }
 
-export function setTracking(on) {
+function _setTracking(on) {
   const n = night(); if (!n) return;
   const m = n.mount, mount = GEAR[G.s.rig.mount];
   if (mount.type === 'fixed') { m.tracking = false; return; }
@@ -177,7 +178,7 @@ export function setTracking(on) {
 }
 
 // manual nudge (hand controller / clutch) in arcsec along the mount's axes
-export function nudge(dx, dy) {
+function _nudge(dx, dy) {
   const n = night(); if (!n) return;
   const m = n.mount, mount = GEAR[G.s.rig.mount], loc = locNow();
   if (m.slew) return;
@@ -199,7 +200,7 @@ export function nudge(dx, dy) {
   emit('mount');
 }
 // aim directly (physical, by hand) at alt/az
-export function aimAltAz(alt, az) {
+function _aimAltAz(alt, az) {
   const n = night(); if (!n) return;
   const loc = locNow(), L = A.lst(G.s.time, loc.lon);
   const before = pointing();
@@ -211,7 +212,7 @@ export function aimAltAz(alt, az) {
   emit('mount');
 }
 // ---- dealing with dew ----
-export function useHairDryer() {
+function _useHairDryer() {
   const n = night(); if (!n) return { error: 'Not observing.' };
   if (!G.s.inventory.includes('hairdryer')) return { error: 'You don’t own a hair dryer (AstroMart → Accessories).' };
   if (n.dryUntil && G.s.time < n.dryUntil) return { error: 'Already drying.' };
@@ -225,7 +226,7 @@ export function useHairDryer() {
   emit('mount');
   return { ok: true, secs };
 }
-export function wipeOptics() {
+function _wipeOptics() {
   const n = night(); if (!n) return { error: 'Not observing.' };
   const had = n.dew;
   n.dew = 0;
@@ -238,7 +239,7 @@ export function wipeOptics() {
   return { ok: true, smudge: n.smudge };
 }
 
-export function rotateCamera(deg) {
+function _rotateCamera(deg) {
   const n = night(); if (!n) return;
   n.mount.roll = A.norm360(n.mount.roll + deg); disturb(0, 0, deg); emit('mount');
 }
@@ -253,7 +254,7 @@ export function reportedPointing() {
   return { ra: q.ra, dec: q.dec };
 }
 
-export function gotoRaDec(ra, dec, label = '') {
+function _gotoRaDec(ra, dec, label = '') {
   const n = night(); if (!n) return { error: 'Not observing.' };
   const mount = GEAR[G.s.rig.mount], m = n.mount, loc = locNow();
   if (!mount.goto) return { error: 'This mount has no GoTo — aim it by hand.' };
@@ -281,7 +282,7 @@ export function gotoRaDec(ra, dec, label = '') {
   emit('mount');
   return { ok: true, dur };
 }
-export function syncTo(ra, dec) {
+function _syncTo(ra, dec) {
   const n = night(); const p = pointing();
   // after sync, reported == solved position, i.e. modelErr = reported - true = (solved - true) ~ 0
   const dE = A.tanProject(p.ra, p.dec, ra, dec);
@@ -290,7 +291,7 @@ export function syncTo(ra, dec) {
   log(`Mount synced to ${A.fmtRA(ra)} ${A.fmtDec(dec)}`);
   emit('mount');
 }
-export function park() {
+function _park() {
   const n = night(); const mount = GEAR[G.s.rig.mount];
   if (!mount.goto) return;
   setTracking(false);
@@ -298,10 +299,10 @@ export function park() {
   if (mount.type === 'eq') { const L = A.lst(G.s.time, loc.lon); const p = pointing(); n.mount.slew = { from: { ra: p.ra, dec: p.dec }, to: { ra: A.norm360(L + 90), dec: 89.9 * Math.sign(loc.lat) }, t0: G.s.time, dur: 25 }; }
   n.mount.parked = true; n.mount.flipped = false; log('Mount parked.'); emit('mount');
 }
-export function unpark() { const n = night(); n.mount.parked = false; log('Mount unparked.'); emit('mount'); }
+function _unpark() { const n = night(); n.mount.parked = false; log('Mount unparked.'); emit('mount'); }
 
 // polar alignment knob adjustment (arcmin). Moves the pointing too.
-export function adjustPolar(dAlt, dAz) {
+function _adjustPolar(dAlt, dAz) {
   const n = night(); const m = n.mount;
   m.pa.alt += dAlt; m.pa.az += dAz;
   // moving the polar axis moves the whole sky in the field
@@ -335,7 +336,7 @@ export function guideRms() {
   const over = 1 + 2.5 * Math.max(0, (ri.load || 0) - 0.8);
   return mount.guideRms * Math.sqrt(env.seeing / 2.2) * over * (1 + env.wind / 40) * (1 + polarErrorTotal() / 600);
 }
-export function startGuiding() {
+function _startGuiding() {
   const n = night(); const ri = rig();
   if (!ri.hasGuide) return { error: 'No guide scope/camera in your rig.' };
   if (!n.mount.tracking) return { error: 'Mount is not tracking.' };
@@ -345,11 +346,11 @@ export function startGuiding() {
   const p = pointing(); if (n.mount.frame === 'radec') { n.mount.ra = p.ra; n.mount.dec = p.dec; }
   log('Guiding started.'); emit('guider'); return { ok: true };
 }
-export function stopGuiding(reason = '') {
+function _stopGuiding(reason = '') {
   const n = night(); if (!n || !n.guider.guiding) return;
   n.guider.guiding = false; log('Guiding stopped' + (reason ? ': ' + reason : '')); emit('guider');
 }
-export function dither(px = 6) {
+function _dither(px = 6) {
   const n = night(); const ri = rig();
   const as = px * ri.scale * (0.5 + rng());
   const th = rng() * Math.PI * 2;
@@ -373,12 +374,12 @@ export function focusDeltaUm() {
   const f = n.focus, d = f.pos - focusBest();
   return d * (f.unit === 'deg' ? ri.opt.focusUmPerDeg || 10 : ri.opt.focusUmPerStep || 4);
 }
-export function moveFocus(delta) {
+function _moveFocus(delta) {
   const n = night(); const f = n.focus;
   f.pos = Math.max(f.min ?? 0, Math.min(f.max ?? 10000, f.pos + delta));
   emit('focus');
 }
-export function setFocus(pos) { const n = night(); const f = n.focus; f.pos = Math.max(f.min ?? 0, Math.min(f.max ?? 10000, pos)); emit('focus'); }
+function _setFocus(pos) { const n = night(); const f = n.focus; f.pos = Math.max(f.min ?? 0, Math.min(f.max ?? 10000, pos)); emit('focus'); }
 
 // ------------------------------------------------------------------ exposures
 function disturb(dE, dN, dRot = 0) {
@@ -454,7 +455,7 @@ function makePath(exp, startPt) {
 export function isExposing() { return !!T.exposure; }
 
 // params: {type, exp, gain, offset, bin, roi, target, save, preview, panelLevel}
-export function expose(params) {
+function _expose(params) {
   const n = night();
   if (!n) return Promise.reject(new Error('You are not out observing.'));
   if (T.exposure) return Promise.reject(new Error('Camera busy.'));
@@ -491,7 +492,7 @@ export function expose(params) {
     emit('exposure', T.exposure);
   });
 }
-export function abortExposure() {
+function _abortExposure() {
   if (!T.exposure) return;
   const ex = T.exposure; T.exposure = null;
   ex.reject(new Error('Exposure aborted'));
@@ -646,4 +647,79 @@ export function tick(realDtSec) {
   emit('tick', dt);
 }
 
-export function setWarp(w) { T.warp = w; emit('warp', w); }
+function _setWarp(w) { T.warp = w; emit('warp', w); }
+
+// ------------------------------------------------------------------ generic state edits (routed in multiplayer)
+function _setProp(path, value) {
+  const n = night(); if (!n) return;
+  const keys = path.split('.'); let o = n;
+  for (let i = 0; i < keys.length - 1; i++) o = o[keys[i]];
+  o[keys[keys.length - 1]] = value;
+  if (path === 'wheelPos') emit('wheel');
+  if (path.startsWith('connected.')) emit('devices');
+  emit('mount');
+  save();
+}
+function _setTarget(t) { G.s.target = t ? { id: t.id, name: t.name || t.id, ra: t.ra, dec: t.dec, size: t.size || 0, type: t.type || '' } : null; save(); emit('target', G.s.target); }
+function _setRig(rig) {
+  const old = G.s.rig; G.s.rig = rig;
+  const n = night();
+  if (n) {
+    const ri = rigInfo(rig);
+    if (old.mount !== rig.mount) {
+      const m = GEAR[rig.mount];
+      n.mount.tracking = false; n.mount.parked = m.goto; n.mount.slew = null; n.mount.flipped = false; n.mount.synced = false;
+      n.mount.pa = m.type === 'eq' ? { alt: (rng() - 0.5) * 140, az: (rng() - 0.5) * 260 } : { alt: 0, az: 0 };
+      const p = pointing();
+      if (m.type === 'eq') { n.mount.frame = 'hadec'; n.mount.ha = -90; n.mount.dec = 89.9 * Math.sign(locNow().lat); }
+      else { n.mount.frame = 'altaz'; n.mount.alt = p ? p.alt : 30; n.mount.az = p ? p.az : 180; }
+      n.mount.roll = 0; n.connected.mount = false; n.connected.guider = false; n.guider = { calibrated: false, guiding: false, looping: false, rms: 0, lost: false, settleUntil: 0 };
+    }
+    if (old.optic !== rig.optic || old.corrector !== rig.corrector || old.camera !== rig.camera) {
+      n.focus = initialFocus(ri, rng);
+      n.connected.camera = false; n.connected.focuser = false; n.connected.wheel = false;
+    }
+    if (!ri.hasGuide) n.connected.guider = false;
+    log('Rig changed — reconnect devices in AstroCap.');
+  }
+  save(); emit('rig', rig); emit('devices');
+}
+function _calibrateGuider() { const n = night(); if (!n) return; n.guider.calibrated = true; log('Guider calibrated.'); emit('guider'); }
+
+// ------------------------------------------------------------------ multiplayer routing
+// On a guest, actions are sent to the host (which runs the simulation); otherwise run locally.
+export const NET = { role: 'solo', rpc: null };
+const OPTIMISTIC = new Set(['setProp', 'setTarget']); // pure state edits: apply locally right away too
+const net = (name, fn) => (...args) => { if (NET.role !== 'client') return fn(...args); if (OPTIMISTIC.has(name)) fn(...args); return NET.rpc(name, args); };
+export const LOCAL = {
+  startNight: _startNight, endNight: _endNight, skipDay: _skipDay, setTracking: _setTracking, nudge: _nudge, aimAltAz: _aimAltAz, rotateCamera: _rotateCamera,
+  gotoRaDec: _gotoRaDec, syncTo: _syncTo, park: _park, unpark: _unpark, adjustPolar: _adjustPolar, startGuiding: _startGuiding, stopGuiding: _stopGuiding,
+  dither: _dither, moveFocus: _moveFocus, setFocus: _setFocus, useHairDryer: _useHairDryer, wipeOptics: _wipeOptics, expose: _expose, abortExposure: _abortExposure,
+  setWarp: _setWarp, setProp: _setProp, setTarget: _setTarget, setRig: _setRig, calibrateGuider: _calibrateGuider,
+};
+export const startNight = net('startNight', _startNight);
+export const endNight = net('endNight', _endNight);
+export const skipDay = net('skipDay', _skipDay);
+export const setTracking = net('setTracking', _setTracking);
+export const nudge = net('nudge', _nudge);
+export const aimAltAz = net('aimAltAz', _aimAltAz);
+export const rotateCamera = net('rotateCamera', _rotateCamera);
+export const gotoRaDec = net('gotoRaDec', _gotoRaDec);
+export const syncTo = net('syncTo', _syncTo);
+export const park = net('park', _park);
+export const unpark = net('unpark', _unpark);
+export const adjustPolar = net('adjustPolar', _adjustPolar);
+export const startGuiding = net('startGuiding', _startGuiding);
+export const stopGuiding = net('stopGuiding', _stopGuiding);
+export const dither = net('dither', _dither);
+export const moveFocus = net('moveFocus', _moveFocus);
+export const setFocus = net('setFocus', _setFocus);
+export const useHairDryer = net('useHairDryer', _useHairDryer);
+export const wipeOptics = net('wipeOptics', _wipeOptics);
+export const expose = net('expose', _expose);
+export const abortExposure = net('abortExposure', _abortExposure);
+export const setWarp = net('setWarp', _setWarp);
+export const setProp = net('setProp', _setProp);
+export const setTarget = net('setTarget', _setTarget);
+export const setRig = net('setRig', _setRig);
+export const calibrateGuider = net('calibrateGuider', _calibrateGuider);

@@ -12,6 +12,15 @@ laptop running a full imaging OS (capture suite, planetarium, guiding, stacking,
 - **Anywhere on Earth.** The Atlas app shows NASA VIIRS night lights; pick any spot and its sky
   brightness is estimated from real satellite light data and the terrain from Blue Marble.
 
+## Modes, saves and co-op
+- **Career**: start with an old DSLR and $300; earn money from images and challenges.
+- **Sandbox**: unlimited money, all gear unlocked, optional always-clear skies.
+- Any number of save slots (main menu → New / Load). Esc opens the pause menu.
+- **Co-op multiplayer**: host from the main menu (Multiplayer → Host) or in-game (Esc → Invite
+  friends) and share the 6-letter room code. Friends join the host's night: same sky, same rig,
+  avatars, chat. The host runs the simulation; guests' actions are sent to the host.
+  Uses PeerJS (WebRTC) — the public PeerJS server only introduces players.
+
 ## Run
 
 ```bash

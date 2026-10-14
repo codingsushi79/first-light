@@ -476,6 +476,54 @@ export class World {
     refs.led.material.color.setHex(S.T.exposure ? (Math.floor(t * 2) % 2 ? 0xff2020 : 0x400000) : 0x00ff40);
   }
 
+  // ------------------------------------------------------------ other players (multiplayer)
+  setRemotePlayers(list) {
+    this.avatars = this.avatars || new Map();
+    const seen = new Set();
+    for (const p of list) {
+      if (!p.pose) continue;
+      seen.add(p.id);
+      let a = this.avatars.get(p.id);
+      if (!a) { a = this.makeAvatar(p); this.avatars.set(p.id, a); this.scene.add(a.g); }
+      a.target = p.pose; a.name = p.name;
+    }
+    for (const [id, a] of this.avatars) if (!seen.has(id)) { this.scene.remove(a.g); this.avatars.delete(id); }
+  }
+  makeAvatar(p) {
+    const g = new THREE.Group();
+    const col = new THREE.Color(p.color || '#8fd3ff');
+    const jacket = new THREE.MeshLambertMaterial({ color: col.clone().multiplyScalar(0.55) });
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.23, 1.05, 14), jacket); body.position.y = 0.95; body.castShadow = true; g.add(body);
+    for (const x of [-0.09, 0.09]) { const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.45, 8), new THREE.MeshLambertMaterial({ color: 0x22252b })); leg.position.set(x, 0.22, 0); g.add(leg); }
+    const headPivot = new THREE.Group(); headPivot.position.y = 1.58; g.add(headPivot);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 12), new THREE.MeshLambertMaterial({ color: 0xc8a48a })); headPivot.add(head);
+    const beanie = new THREE.Mesh(new THREE.SphereGeometry(0.135, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: col })); beanie.position.y = 0.02; headPivot.add(beanie);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.025), new THREE.MeshBasicMaterial({ color: 0xff2010, toneMapped: false })); lamp.position.set(0, 0.06, -0.13); headPivot.add(lamp);
+    const beam = new THREE.SpotLight(0xff1a00, 0, 10, 0.5, 0.6, 1.5); beam.position.copy(lamp.position); headPivot.add(beam); beam.target.position.set(0, -0.2, -2); headPivot.add(beam.target);
+    // name tag
+    const c = document.createElement('canvas'); c.width = 256; c.height = 48; const x = c.getContext('2d');
+    x.font = '500 26px "IBM Plex Sans Condensed", system-ui'; x.textAlign = 'center'; x.fillStyle = 'rgba(0,0,0,.55)'; const w = Math.min(250, x.measureText(p.name).width + 24); x.fillRect(128 - w / 2, 4, w, 38);
+    x.fillStyle = p.color || '#8fd3ff'; x.fillText(p.name.toUpperCase(), 128, 33);
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true })); tag.scale.set(0.9, 0.17, 1); tag.position.y = 2.0; g.add(tag);
+    return { g, headPivot, lamp, beam, cur: null, target: null };
+  }
+  updateAvatars(dt) {
+    if (!this.avatars) return;
+    for (const a of this.avatars.values()) {
+      const t = a.target; if (!t) continue;
+      const tp = v3(t.pos[0], 0, t.pos[2]);
+      if (!a.cur) a.cur = { pos: tp.clone(), yaw: t.yaw, pitch: t.pitch };
+      const k = Math.min(1, dt * 10);
+      a.cur.pos.lerp(tp, k);
+      let dy = t.yaw - a.cur.yaw; while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
+      a.cur.yaw += dy * k; a.cur.pitch += (t.pitch - a.cur.pitch) * k;
+      a.g.position.copy(a.cur.pos); a.g.rotation.y = a.cur.yaw;
+      a.headPivot.rotation.x = THREE.MathUtils.clamp(a.cur.pitch, -0.9, 0.9);
+      a.g.scale.y = t.at === 'laptop' ? 0.82 : 1; // sitting at the table
+      a.lamp.visible = !!t.lamp; a.beam.intensity = t.lamp ? 2.5 : 0;
+    }
+  }
+
   // ------------------------------------------------------------ laptop screen texture
   drawScreen() {
     const c = this.screenCanvas, g = c.getContext('2d'); const W = c.width, H = c.height;
@@ -535,7 +583,8 @@ export class World {
     window.addEventListener('blur', () => { this.keys = {}; });
   }
   look(dx, dy) {
-    this.player.yaw -= dx * 0.0025; this.player.pitch = THREE.MathUtils.clamp(this.player.pitch - dy * 0.0025, -1.45, 1.52);
+    const k = 0.0025 * (window.__flSens || 1);
+    this.player.yaw -= dx * k; this.player.pitch = THREE.MathUtils.clamp(this.player.pitch - dy * k, -1.45, 1.52);
   }
   setGrab(on) {
     this.grab = on;
@@ -625,6 +674,7 @@ export class World {
       if (!this._lastAim || t - this._lastAim > 0.08) { this._lastAim = t; S.aimAltAz(aa.alt, aa.az); }
     }
     this.updateRig(t);
+    this.updateAvatars(dt);
     if (!this._lastScreen || t - this._lastScreen > 0.5) { this._lastScreen = t; this.drawScreen(); }
     // hover
     const prev = this.hover; this.hover = this.grab ? null : this.pick();

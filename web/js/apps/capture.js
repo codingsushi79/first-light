@@ -77,10 +77,10 @@ export const captureApp = {
       const dev = (key, label, name, avail, why) => {
         const conn = n && n.connected[key];
         const btn = h('button', { class: 'btn ' + (conn ? '' : 'primary'), disabled: !n || !avail, onclick: () => {
-          if (!n) return; n.connected[key] = !conn;
+          if (!n) return; S.setProp('connected.' + key, !conn);
           if (key === 'mount' && !conn) { const mt = GEAR[G.s.rig.mount]; S.log(`Mount connected: ${mt.name}`); }
           if (key === 'camera' && !conn) S.log(`Camera connected: ${ri.cam.name}`);
-          if (key === 'guider' && !conn) { n.guider.calibrated = false; }
+          if (key === 'guider' && !conn) { S.setProp('guider.calibrated', false); }
           if (!n.connected[key] && key === 'guider') S.stopGuiding('disconnected');
           emit('devices'); renderEquip(clear(el));
         } }, conn ? 'Disconnect' : 'Connect');
@@ -112,8 +112,8 @@ export const captureApp = {
       if (ri.cam && ri.cam.cooled && n) {
         const c = h('div', { class: 'card' }, h('h3', {}, 'Cooling'));
         const st = h('div', { class: 'kv' }, h('span', {}, 'Sensor'), h('b', {}, `${n.cam.temp.toFixed(1)}°C · ${n.cam.power.toFixed(0)}% power`));
-        c.append(st, h('div', { class: 'row' }, h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: n.cam.coolerOn, onchange: (e) => { n.cam.coolerOn = e.target.checked; S.log(`Cooler ${e.target.checked ? 'on' : 'off'}`); } }), 'Cooler on'),
-          h('span', { class: 'muted' }, 'Set point'), num(n.cam.setpoint, (v) => { n.cam.setpoint = v; }, { step: 1, min: -30, max: 20, style: { width: '64px' } }), h('span', {}, '°C')));
+        c.append(st, h('div', { class: 'row' }, h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: n.cam.coolerOn, onchange: (e) => { S.setProp('cam.coolerOn', e.target.checked); S.log(`Cooler ${e.target.checked ? 'on' : 'off'}`); } }), 'Cooler on'),
+          h('span', { class: 'muted' }, 'Set point'), num(n.cam.setpoint, (v) => { S.setProp('cam.setpoint', v); }, { step: 1, min: -30, max: 20, style: { width: '64px' } }), h('span', {}, '°C')));
         const tmr = setInterval(() => { if (!c.isConnected) return clearInterval(tmr); st.lastChild.textContent = `${n.cam.temp.toFixed(1)}°C · ${n.cam.power.toFixed(0)}% power`; }, 500);
         wrap.append(c);
       }
@@ -147,7 +147,7 @@ export const captureApp = {
           h('label', {}, 'Target name'), h('input', { class: 'inp', value: cs.target || (G.s.target ? G.s.target.name : ''), placeholder: 'e.g. M31', onchange: (e) => { cs.target = e.target.value; save(); } }),
         ), sensInfo);
       if (ri.hasWheel && n) {
-        const fsel = select(ri.filters.map((f, i) => [i, FILTERS.find((x) => x.id === f)?.name || f]), n.wheelPos, async (v) => { if (!n.connected.wheel) { toast('Connect the filter wheel first', 'warn'); return; } n.wheelPos = +v; S.log('Filter → ' + ri.filters[n.wheelPos]); emit('wheel'); });
+        const fsel = select(ri.filters.map((f, i) => [i, FILTERS.find((x) => x.id === f)?.name || f]), n.wheelPos, async (v) => { if (!n.connected.wheel) { toast('Connect the filter wheel first', 'warn'); return; } S.setProp('wheelPos', +v); S.log('Filter → ' + ri.filters[+v]); });
         panel.append(h('div', { class: 'row', style: { marginTop: '6px' } }, h('span', { class: 'muted' }, 'Filter wheel'), fsel));
       }
       const btnCap = h('button', { class: 'btn primary big', onclick: () => doCapture(false) }, '● Capture');

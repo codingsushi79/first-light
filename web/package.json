@@ -9,6 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.1.0",
+    "@fontsource/ibm-plex-sans": "^5.1.0",
+    "@fontsource/ibm-plex-sans-condensed": "^5.1.0",
+    "peerjs": "^1.5.4",
     "three": "0.170.0"
   },
   "devDependencies": {

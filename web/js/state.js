@@ -54,10 +54,10 @@ export function fmtDur(sec) {
 }
 
 // ---- the game state ----
-export function newGame() {
+export function newGame(gameMode = 'career') {
   const tz = LOC.backyard.tz;
   return {
-    version: 3,
+    version: 3, gameMode, created: Date.now(), saveName: '',
     money: 300,
     rep: 0,
     time: localMs(2026, 9, 13, 13, 0, tz), // Oct 13 2026, 1pm local
@@ -81,24 +81,71 @@ export function newGame() {
   };
 }
 
-export const G = { s: null };
-export async function loadGame() {
-  try {
-    const s = await idbGet('save');
-    if (s && s.version === 3) { G.s = s; return true; }
-  } catch (e) { console.warn(e); }
-  G.s = newGame();
-  return false;
+export const G = { s: null, slot: null, guest: false };
+
+// ---- save slots ----
+// IDB: 'slots' -> [{id, name, gameMode, created, updated, money, nights, frames, location}], 'save:<id>' -> state
+export async function listSlots() {
+  let slots = (await idbGet('slots')) || [];
+  if (!slots.length) {
+    const legacy = await idbGet('save'); // pre-slots save
+    if (legacy && legacy.version === 3) {
+      const id = 'slot_' + Date.now().toString(36);
+      legacy.gameMode = legacy.gameMode || 'career'; legacy.saveName = legacy.saveName || 'Career 1';
+      await idbSet('save:' + id, legacy);
+      slots = [slotMeta(id, legacy)]; await idbSet('slots', slots); await idbDel('save');
+    }
+  }
+  return slots.sort((a, b) => b.updated - a.updated);
+}
+function slotMeta(id, s) {
+  return { id, name: s.saveName || 'Untitled', gameMode: s.gameMode || 'career', created: s.created || Date.now(), updated: Date.now(), money: s.money, nights: s.stats ? s.stats.nights : 0, frames: s.frames ? s.frames.length : 0, location: s.location, gameTime: s.time };
+}
+export async function createSlot(name, gameMode) {
+  const s = newGame(gameMode);
+  s.saveName = name || (gameMode === 'sandbox' ? 'Sandbox' : 'Career');
+  const id = 'slot_' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
+  G.s = s; G.slot = id; G.guest = false;
+  await save(true);
+  return id;
+}
+export async function loadSlot(id) {
+  const s = await idbGet('save:' + id);
+  if (!s || s.version !== 3) return false;
+  G.s = s; G.slot = id; G.guest = false;
+  if (s.gameMode === 'sandbox') applySandbox(s);
+  return true;
+}
+export async function deleteSlot(id) {
+  const slots = ((await idbGet('slots')) || []).filter((x) => x.id !== id);
+  await idbSet('slots', slots); await idbDel('save:' + id);
 }
 let saveTimer = null;
 export function save(immediate = false) {
-  if (!G.s) return;
+  if (!G.s || !G.slot || G.guest) return Promise.resolve();
   clearTimeout(saveTimer);
-  const doIt = () => idbSet('save', JSON.parse(JSON.stringify(G.s))).catch((e) => console.warn('save failed', e));
+  const doIt = async () => {
+    try {
+      await idbSet('save:' + G.slot, JSON.parse(JSON.stringify(G.s)));
+      const slots = ((await idbGet('slots')) || []).filter((x) => x.id !== G.slot);
+      slots.push(slotMeta(G.slot, G.s)); await idbSet('slots', slots);
+    } catch (e) { console.warn('save failed', e); }
+  };
   if (immediate) return doIt();
   saveTimer = setTimeout(doIt, 1500);
+  return Promise.resolve();
+}
+export const isSandbox = () => !!(G.s && G.s.gameMode === 'sandbox');
+// Sandbox: unlimited money and every piece of gear
+let ALL_GEAR_IDS = [];
+export function setAllGearIds(ids) { ALL_GEAR_IDS = ids; }
+export function applySandbox(s) {
+  s.money = 1e9;
+  for (const id of ALL_GEAR_IDS) if (!s.inventory.includes(id)) s.inventory.push(id);
+  s.sandbox = s.sandbox || { clearSkies: false };
 }
 export function addMoney(n, why) {
+  if (isSandbox()) { emit('money', { delta: 0, why }); return; }
   G.s.money += n;
   emit('money', { delta: n, why });
   save();
