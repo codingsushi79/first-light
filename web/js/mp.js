@@ -46,22 +46,74 @@ class LocalPeer extends Emitter {
 }
 export const isLocalCode = (code) => /^L[A-Z0-9]{5}$/.test(code);
 
+// ------------------------------------------------------------------ LAN transport (desktop app)
+// The Rust backend runs a WebSocket hub (host) or client (guest); we talk to it over Tauri IPC.
+export const LAN_PORT = 47800;
+export const hasLan = () => !!(window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.event);
+export const isLanAddress = (s) => /^\d{1,3}(\.\d{1,3}){3}(:\d{1,5})?$/.test(s) || /^[a-z0-9.-]+\.local(:\d+)?$/i.test(s);
+const tauri = () => window.__TAURI__;
+class LanConn extends Emitter {
+  constructor(id, toHost) { super(); this.peer = id; this.toHost = toHost; this.open = false; this.metadata = null; }
+  send(data) { tauri().core.invoke('lan_send', { to: this.toHost ? null : this.peer, data: JSON.stringify(data) }).catch(() => {}); }
+  close() { tauri().core.invoke('lan_stop').catch(() => {}); }
+}
+class LanHostPeer extends Emitter {
+  constructor() { super(); this.conns = new Map(); this.unlisten = null; }
+  async start() {
+    const r = await tauri().core.invoke('lan_host', { port: LAN_PORT });
+    this.id = 'lan-host'; this.addr = `${r.ip || '127.0.0.1'}:${r.port}`;
+    this.unlisten = await tauri().event.listen('lan', (ev) => {
+      const e = ev.payload;
+      if (e.kind === 'join') this.conns.set(e.id, new LanConn(e.id, false));
+      else if (e.kind === 'msg') {
+        const c = this.conns.get(e.from); if (!c) return;
+        let data; try { data = JSON.parse(e.data); } catch { return; }
+        if (!c.open && data.t === 'hello') { c.metadata = { name: data.name }; c.open = true; this.fire('connection', c); c.fire('open'); return; }
+        if (c.open) c.fire('data', data);
+      } else if (e.kind === 'leave') { const c = this.conns.get(e.id); if (c) { c.open = false; c.fire('close'); this.conns.delete(e.id); } }
+    });
+    this.open = true; this.fire('open', this.id);
+  }
+  destroy() { this.unlisten && this.unlisten(); tauri().core.invoke('lan_stop').catch(() => {}); }
+}
+class LanGuestPeer extends Emitter {
+  constructor() { super(); this.id = 'lan-guest'; this.open = true; setTimeout(() => this.fire('open', this.id), 0); }
+  connect(addr, opts) {
+    const c = new LanConn('lan-host', true);
+    (async () => {
+      try {
+        this.unlisten = await tauri().event.listen('lan', (ev) => {
+          const e = ev.payload;
+          if (e.kind === 'msg') { try { c.fire('data', JSON.parse(e.data)); } catch { /* ignore */ } }
+          if (e.kind === 'closed') { c.open = false; c.fire('close'); }
+        });
+        await tauri().core.invoke('lan_join', { addr });
+        c.open = true; c.send({ t: 'hello', name: opts.metadata.name }); c.fire('open');
+      } catch (err) { this.fire('error', { type: 'lan', message: String(err) }); }
+    })();
+    return c;
+  }
+  destroy() { this.unlisten && this.unlisten(); tauri().core.invoke('lan_stop').catch(() => {}); }
+}
+
 // ------------------------------------------------------------------ host
-export function host(name) {
+export function host(name, opts = {}) {
   return new Promise((resolve, reject) => {
     MP.name = name || 'Host';
     const local = (() => { try { return localStorage.getItem('fl-mp-local') === '1'; } catch { return false; } })();
     const code = local ? 'L' + makeCode().slice(1) : makeCode();
     let peer;
-    if (local) { peer = new LocalPeer(PREFIX + code); peer.listen(code); } else peer = new Peer(PREFIX + code, { debug: 0 });
+    if (opts.lan) {
+      if (!hasLan()) { reject(new Error('LAN hosting needs the desktop app.')); return; }
+      peer = new LanHostPeer(); peer.start().catch((e) => reject(new Error(String(e))));
+    } else if (local) { peer = new LocalPeer(PREFIX + code); peer.listen(code); } else peer = new Peer(PREFIX + code, { debug: 0 });
     MP.peer = peer;
     peer.on('open', (id) => {
-      MP.role = 'host'; MP.code = code; MP.myId = id;
+      MP.role = 'host'; MP.code = opts.lan ? peer.addr : code; MP.myId = id; MP.lan = !!opts.lan;
       S.NET.role = 'host';
       MP.players = { [id]: { id, name: MP.name, color: COLORS[0], pose: null, host: true } };
-      status(`Hosting — room code ${code}`, 'good');
       startHostLoops();
-      resolve(code);
+      resolve(MP.code);
     });
     peer.on('error', (e) => { status('Network error: ' + (e.type || e.message), 'bad'); if (MP.role !== 'host') reject(e); });
     peer.on('connection', (conn) => {
@@ -147,22 +199,26 @@ async function hostHandle(conn, msg) {
 export function join(code, name) {
   return new Promise((resolve, reject) => {
     MP.name = name || 'Guest';
-    const local = isLocalCode(code.trim().toUpperCase());
+    const raw = code.trim();
+    const lan = isLanAddress(raw);
+    const lanAddr = lan ? (raw.includes(':') ? raw : `${raw}:${LAN_PORT}`) : null;
+    const local = !lan && isLocalCode(raw.toUpperCase());
     let peer;
-    if (local) { peer = new LocalPeer('guest-' + Math.random().toString(36).slice(2, 9)); peer.listen(code.trim().toUpperCase()); }
+    if (lan) { if (!hasLan()) { reject(new Error('LAN play needs the desktop app.')); return; } peer = new LanGuestPeer(); }
+    else if (local) { peer = new LocalPeer('guest-' + Math.random().toString(36).slice(2, 9)); peer.listen(code.trim().toUpperCase()); }
     else peer = new Peer({ debug: 0 });
     MP.peer = peer;
     let done = false;
     const fail = (e) => { if (!done) { done = true; reject(e); } else { status('Disconnected from host.', 'bad'); emit('mpdisconnect'); } };
     peer.on('error', (e) => fail(new Error(e.type === 'peer-unavailable' ? 'No game with that code (is the host still hosting?)' : (e.message || e.type))));
     peer.on('open', () => {
-      const conn = local ? peer.connect(code.trim().toUpperCase(), PREFIX + code.trim().toUpperCase(), { metadata: { name: MP.name } }) : peer.connect(PREFIX + code.trim().toUpperCase(), { reliable: true, metadata: { name: MP.name } });
+      const conn = lan ? peer.connect(lanAddr, { metadata: { name: MP.name } }) : local ? peer.connect(code.trim().toUpperCase(), PREFIX + code.trim().toUpperCase(), { metadata: { name: MP.name } }) : peer.connect(PREFIX + code.trim().toUpperCase(), { reliable: true, metadata: { name: MP.name } });
       MP.hostConn = conn;
       const to = setTimeout(() => fail(new Error('Timed out connecting to host.')), 15000);
       conn.on('data', (msg) => {
         if (msg.t === 'welcome') {
           clearTimeout(to);
-          MP.role = 'client'; MP.code = msg.code; MP.myId = msg.you; S.NET.role = 'client'; S.NET.rpc = rpc;
+          MP.role = 'client'; MP.code = msg.code; MP.lan = lan; MP.myId = msg.you; S.NET.role = 'client'; S.NET.rpc = rpc;
           applyFull(msg.state); setPlayers(msg.players);
           done = true; resolve(msg.state);
           setInterval(() => { if (conn.open) conn.send({ t: 'pose', pose: myPose() }); }, 120);

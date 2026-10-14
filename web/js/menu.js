@@ -4,7 +4,7 @@ import * as A from './astro.js';
 import { listSlots, deleteSlot, G } from './state.js';
 import { cat, bvToRGB } from './catalog.js';
 import { money } from './gear.js';
-import { MP } from './mp.js';
+import { MP, hasLan, LAN_PORT } from './mp.js';
 
 export const PREFS = loadPrefs();
 function loadPrefs() { try { return { quality: 1024, nightMode: false, sens: 1, hudScale: 1, name: '', ...JSON.parse(localStorage.getItem('fl-prefs') || '{}') }; } catch { return { quality: 1024, nightMode: false, sens: 1, hudScale: 1, name: '' }; } }
@@ -100,7 +100,7 @@ function loadPanel(cb, slots) {
 
 function mpPanel(cb, slots) {
   const name = h('input', { class: 'av-in', value: PREFS.name || '', placeholder: 'Your name', maxlength: 24 });
-  const code = h('input', { class: 'av-in mono', placeholder: 'ROOM CODE', maxlength: 6, style: { textTransform: 'uppercase', letterSpacing: '0.3em' } });
+  const code = h('input', { class: 'av-in mono', placeholder: 'ROOM CODE  or  192.168.1.20', maxlength: 40, style: { letterSpacing: '0.12em' } });
   const status = h('div', { class: 'note' });
   const remember = () => { PREFS.name = name.value.trim(); savePrefs(); return PREFS.name || 'Observer'; };
   let hostSlot = slots[0] ? slots[0].id : null;
@@ -111,12 +111,14 @@ function mpPanel(cb, slots) {
     h('div', { class: 'setting' }, h('span', { class: 'setting-label' }, 'Your name'), name),
     h('h2', { style: { marginTop: '22px' } }, 'Host a game'),
     slots.length ? hostList : h('div', { class: 'note' }, 'Create a save first (New game), then host it.'),
-    h('div', { class: 'menu-footer' }, h('button', { class: 'primary', disabled: !slots.length, onclick: () => cb.onHost(hostSlot, remember()) }, 'Host')),
+    h('div', { class: 'menu-footer' },
+      h('button', { disabled: !slots.length || !hasLan(), title: hasLan() ? `Friends on your Wi-Fi/network join with your IP address (port ${LAN_PORT})` : 'LAN play needs the desktop app', onclick: () => cb.onHost(hostSlot, remember(), true) }, 'Host on LAN'),
+      h('button', { class: 'primary', disabled: !slots.length, onclick: () => cb.onHost(hostSlot, remember(), false) }, 'Host online')),
     h('h2', { style: { marginTop: '22px' } }, 'Join a game'),
-    h('div', { class: 'setting' }, h('span', { class: 'setting-label' }, 'Room code'), code),
-    h('div', { class: 'menu-footer' }, h('button', { class: 'primary', onclick: async () => { status.textContent = 'Connecting…'; try { await cb.onJoin(code.value.trim().toUpperCase(), remember()); } catch (e) { status.textContent = '⚠ ' + e.message; } } }, 'Join')),
+    h('div', { class: 'setting' }, h('span', { class: 'setting-label' }, 'Room code or host IP'), code, h('span', { class: 'setting-hint' }, 'Online: the 6-letter code. LAN: the host’s address shown in their HUD, e.g. 192.168.1.20 (port optional).')),
+    h('div', { class: 'menu-footer' }, h('button', { class: 'primary', onclick: async () => { status.textContent = 'Connecting…'; try { const v = code.value.trim(); await cb.onJoin(/[.:]/.test(v) ? v : v.toUpperCase(), remember()); } catch (e) { status.textContent = '⚠ ' + e.message; } } }, 'Join')),
     status,
-    h('div', { class: 'setting-hint', style: { marginTop: '10px' } }, 'Peer-to-peer (WebRTC). The free PeerJS service only introduces players; game data flows directly between computers. Very strict networks may block it.'));
+    h('div', { class: 'setting-hint', style: { marginTop: '10px' } }, `Online: peer-to-peer (WebRTC); the free PeerJS service only introduces players. LAN: direct connection on port ${LAN_PORT} — the host’s computer may ask to allow incoming connections (macOS firewall); click Allow.`));
 }
 
 export function settingsPanel(onChange) {
@@ -155,7 +157,7 @@ export function showPause(cb) {
   const add = (label, fn, dis) => btns.append(h('button', { disabled: !!dis, onclick: fn }, label));
   add('Resume', () => hidePause());
   if (MP.role !== 'client') add('Save game', async () => { await cb.onSave(); flash('Saved.'); });
-  if (MP.role === 'solo') add('Invite friends (host co-op)', () => cb.onHost());
+  if (MP.role === 'solo') { add('Invite friends online', () => cb.onHost(false)); add('Host on LAN (same network)', () => cb.onHost(true), !hasLan()); }
   if (MP.role !== 'solo') add(MP.role === 'host' ? 'Stop hosting & main menu' : 'Leave game', () => cb.onLeave());
   add('Settings', () => { side.innerHTML = ''; side.append(settingsPanel(cb.onPrefs)); });
   add('Save & exit to main menu', () => cb.onMain());
@@ -163,7 +165,7 @@ export function showPause(cb) {
   const flashEl = h('div', { class: 'note', style: { marginTop: '14px', minHeight: '1.5em' } });
   const flash = (t) => { flashEl.textContent = t; setTimeout(() => (flashEl.textContent = ''), 1800); };
   const info = G.s ? h('div', { class: 'subtitle' }, `${G.s.saveName || 'Guest session'} · ${G.s.gameMode === 'sandbox' ? 'Sandbox' : 'Career'}${MP.role !== 'solo' ? ` · co-op ${MP.code}` : ''}`) : null;
-  const mpBox = MP.role !== 'solo' ? panel('Co-op', h('div', { class: 'note' }, MP.role === 'host' ? 'Friends join from Main menu → Multiplayer → Join with this code:' : 'Connected to the host’s game.'), h('div', { class: 'room-code mono' }, MP.code || ''),
+  const mpBox = MP.role !== 'solo' ? panel('Co-op', h('div', { class: 'note' }, MP.role === 'host' ? (MP.lan ? 'Friends on the same network join from Main menu → Multiplayer → Join with this address:' : 'Friends join from Main menu → Multiplayer → Join with this code:') : 'Connected to the host’s game.'), h('div', { class: 'room-code mono' }, MP.code || ''),
     ...Object.values(MP.players).map((p) => h('div', { class: 'row' }, h('span', { style: { color: p.color } }, `● ${p.name}${p.host ? ' (host)' : ''}`)))) : null;
   if (mpBox) side.append(mpBox);
   pauseEl = h('div', { class: 'menu-root pause ui-av' }, h('div', { class: 'menu-shade solid' }), h('div', { class: 'menu-panel main' }, h('div', { class: 'title small' }, 'Paused'), info, btns, flashEl), side);

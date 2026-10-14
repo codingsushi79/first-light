@@ -19,7 +19,8 @@ laptop running a full imaging OS (capture suite, planetarium, guiding, stacking,
 - **Co-op multiplayer**: host from the main menu (Multiplayer → Host) or in-game (Esc → Invite
   friends) and share the 6-letter room code. Friends join the host's night: same sky, same rig,
   avatars, chat. The host runs the simulation; guests' actions are sent to the host.
-  Uses PeerJS (WebRTC) — the public PeerJS server only introduces players.
+  Online uses PeerJS (WebRTC) — the public PeerJS server only introduces players.
+  **LAN**: Host on LAN shows your IP; friends on the same network type it into Join (port 47800).
 
 ## Run
 

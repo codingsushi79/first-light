@@ -45,7 +45,7 @@ function openMenu() {
   showMainMenu({
     onStart: (id) => startSolo(id),
     onNew: async (name, mode) => { await createSlot(name, mode); if (mode === 'sandbox') { applySandbox(G.s); await save(true); } hideMainMenu(); startGameUI(true); },
-    onHost: async (id, name) => { await startSolo(id); await startHosting(name); },
+    onHost: async (id, name, lan) => { await startSolo(id); await startHosting(name, lan); },
     onJoin: async (code, name) => { if (!code) throw new Error('Enter a room code.'); await mpJoin(code, name); hideMainMenu(); startGameUI(false); toast(`Joined ${code}. You're in the host's night.`, 'good'); },
     onRefresh: () => openMenu(),
   });
@@ -54,10 +54,10 @@ async function startSolo(slotId) {
   if (!(await loadSlot(slotId))) { toast('Could not load that save.', 'bad'); return; }
   hideMainMenu(); startGameUI(false);
 }
-async function startHosting(name) {
+async function startHosting(name, lan = false) {
   try {
-    const code = await mpHost(name || PREFS.name || 'Host');
-    toast(`Co-op open! Room code: ${code} — friends join via Main menu → Multiplayer.`, 'good', 12000);
+    const code = await mpHost(name || PREFS.name || 'Host', { lan });
+    toast(lan ? `LAN game open at ${code} — friends on your network join via Main menu → Multiplayer with that address. (Allow incoming connections if macOS asks.)` : `Co-op open! Room code: ${code} — friends join via Main menu → Multiplayer.`, 'good', 14000);
   } catch (e) { toast('Could not start hosting: ' + (e.message || e.type), 'bad'); }
 }
 
@@ -78,7 +78,7 @@ function startGameUI(isNew) {
 function pauseMenu() {
   showPause({
     onSave: () => save(true),
-    onHost: async () => { hidePause(); await startHosting(PREFS.name); },
+    onHost: async (lan) => { hidePause(); await startHosting(PREFS.name, lan); },
     onLeave: async () => { if (MP.role === 'host') await save(true); mpLeave(); location.reload(); },
     onMain: async () => { await save(true); mpLeave(); location.reload(); },
     onQuit: async () => { await save(true); quitApp(); },
