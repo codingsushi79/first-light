@@ -3,7 +3,7 @@ import { h, toast, openApp, select, confirmDlg, promptDlg, dialog } from '../wm.
 import { Viewer, drawHistogram, canvasFromRGBA, bar } from '../components.js';
 import * as A from '../astro.js';
 import { G, on, off, emit, save, fmtTime, fmtDate, fmtDur, idbGet, idbSet, idbDel } from '../state.js';
-import { GEAR, LOC, FILTERS, filterLabel } from '../gear.js';
+import { GEAR, LOC, FILTERS, filterLabel, filterBand } from '../gear.js';
 import { viewRecipe, stackJob } from '../imaging.js';
 import { uid } from '../util.js';
 import { scoreImage } from './social.js';
@@ -420,10 +420,10 @@ export const pixellabApp = {
       if (mono) {
         const opts = [['', '—'], ...G.s.stacks.filter((s) => s.nc === 1 && s.target === src.meta.target).map((s) => [s.id, `${fname(s.filter)} (${s.n} subs)`])];
         const ch = (k, label) => h('div', { class: 'row' }, h('span', { style: { width: '22px' } }, label), select(opts, combo[k] || '', (v) => { combo[k] = v || null; rebuild(); }));
-        const preset = (name) => { const by = (f) => (G.s.stacks.find((s) => s.nc === 1 && s.target === src.meta.target && s.filter === f) || {}).id || null;
-          if (name === 'HOO') combo = { R: by('f_ha'), G: by('f_oiii'), B: by('f_oiii'), L: null };
-          if (name === 'SHO') combo = { R: by('f_sii'), G: by('f_ha'), B: by('f_oiii'), L: null };
-          if (name === 'LRGB') combo = { R: by('f_R'), G: by('f_G'), B: by('f_B'), L: by('f_L') };
+        const preset = (name) => { const by = (band) => ([...G.s.stacks].reverse().find((s) => s.nc === 1 && s.target === src.meta.target && filterBand(s.filter) === band) || {}).id || null;
+          if (name === 'HOO') combo = { R: by('ha'), G: by('oiii'), B: by('oiii'), L: null };
+          if (name === 'SHO') combo = { R: by('sii'), G: by('ha'), B: by('oiii'), L: null };
+          if (name === 'LRGB') combo = { R: by('R'), G: by('G'), B: by('B'), L: by('L') };
           if (name === 'Mono') combo = { R: src.meta.id, G: src.meta.id, B: src.meta.id, L: null };
           for (const k of ['R', 'G', 'B']) if (!combo[k]) combo[k] = src.meta.id; renderPanel(); rebuild(); };
         panel.append(h('div', { class: 'card' }, h('h3', {}, 'Channel combination (mono)'), ch('R', 'R'), ch('G', 'G'), ch('B', 'B'), ch('L', 'L'),
@@ -634,17 +634,17 @@ export async function autoProcess({ target, preset = 'auto', title, params = {} 
   const key = (s) => String(s || '').toLowerCase();
   const mine = G.s.stacks.filter((s) => key(s.target) === key(target));
   if (!mine.length) throw new Error(`No stacks of “${target}” — run stack first.`);
-  const newest = (f) => [...mine].reverse().find((s) => (s.filter || null) === f);
+  const newest = (band) => [...mine].reverse().find((s) => filterBand(s.filter) === band);
   const color = [...mine].reverse().find((s) => s.nc === 3);
-  if (preset === 'auto') preset = color ? 'color' : newest('f_R') && newest('f_G') && newest('f_B') ? (newest('f_L') ? 'LRGB' : 'RGB') : newest('f_ha') && newest('f_oiii') ? (newest('f_sii') ? 'SHO' : 'HOO') : 'mono';
+  if (preset === 'auto') preset = color ? 'color' : newest('R') && newest('G') && newest('B') ? (newest('L') ? 'LRGB' : 'RGB') : newest('ha') && newest('oiii') ? (newest('sii') ? 'SHO' : 'HOO') : 'mono';
   const load = async (m) => ({ meta: m, data: (await idbGet('stack:' + m.id)).data });
   let ref, r, g, b, L = null, used = [];
   if (preset === 'color') { if (!color) throw new Error('No color stack.'); const s = await load(color); ref = color; used = [color]; [r, g, b] = s.data; }
   else {
-    const pick = { LRGB: ['f_R', 'f_G', 'f_B', 'f_L'], RGB: ['f_R', 'f_G', 'f_B', null], HOO: ['f_ha', 'f_oiii', 'f_oiii', null], SHO: ['f_sii', 'f_ha', 'f_oiii', null] }[preset];
+    const pick = { LRGB: ['R', 'G', 'B', 'L'], RGB: ['R', 'G', 'B', null], HOO: ['ha', 'oiii', 'oiii', null], SHO: ['sii', 'ha', 'oiii', null] }[preset];
     if (pick) {
       const ms = pick.map((f) => (f ? newest(f) : null));
-      if (ms.slice(0, 3).some((m) => !m)) throw new Error(`${preset} needs stacks for ${pick.filter(Boolean).map(fname).join(', ')}.`);
+      if (ms.slice(0, 3).some((m) => !m)) throw new Error(`${preset} needs stacks for ${pick.filter(Boolean).map((b) => ({ ha: 'Hα', oiii: 'OIII', sii: 'SII' }[b] || b)).join(', ')}.`);
       ref = ms[3] || ms[0]; used = [...new Set(ms.filter(Boolean))];
       const get = async (m) => resampleStack(ref, await load(m));
       r = await get(ms[0]); g = await get(ms[1]); b = await get(ms[2]); if (ms[3]) L = await get(ms[3]);

@@ -2,7 +2,7 @@
 // travel, gear, framing, focus, sequences, calibration, stacking, processing and posting.
 import * as A from './astro.js';
 import { G, emit, save, localParts, localMs } from './state.js';
-import { GEAR, LOC, rigInfo } from './gear.js';
+import { GEAR, LOC, rigInfo, filterLabel } from './gear.js';
 import * as S from './session.js';
 import * as RT from './routines.js';
 import { findLocal, sesame } from './catalog.js';
@@ -13,7 +13,7 @@ import { PREFS } from './menu.js';
 
 export const FILTER_NAMES = { L: 'f_L', R: 'f_R', G: 'f_G', B: 'f_B', HA: 'f_ha', OIII: 'f_oiii', SII: 'f_sii', HA3: 'f_ha3', OIII3: 'f_oiii3', SII3: 'f_sii3', LP: 'f_lp', DUAL: 'f_dual', ENHANCE: 'f_lenhance', ULTIMATE: 'f_ultimate', NONE: null };
 const filterId = (n) => { const k = String(n).toUpperCase(); if (k in FILTER_NAMES) return FILTER_NAMES[k]; if (GEAR[n] && GEAR[n].kind === 'filter') return n; throw new Error(`Unknown filter “${n}” (use L R G B Ha OIII SII Ha3 OIII3 SII3 LP Dual Enhance Ultimate)`); };
-const filterName = (id) => (Object.entries(FILTER_NAMES).find(([, v]) => v === id) || [id || 'none'])[0].replace('HA', 'Ha');
+const filterName = (id) => (id ? filterLabel(id) : 'no filter');
 
 export const HELP = [
   ['site <id>', 'Travel there tonight (packs up first if you are elsewhere). Ids are listed in Atlas.'],

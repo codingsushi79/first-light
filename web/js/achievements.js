@@ -41,7 +41,7 @@ export const ACHIEVEMENTS = [
   ['int50', 'Photon Hoarder', '50 hours of total integration.', 1500, (l, s) => s.stats.integration >= 180000],
   ['score90', 'Masterpiece', 'Save a final image scoring 90+.', 800, (l, s) => s.finals.some((f) => f.score && f.score.total >= 90)],
   ['iotd', 'Image of the Day', 'Win Image of the Day on StarShare.', 0, (l, s) => s.posts.some((p) => p.award === 'Image of the Day')],
-  ['nb', 'Hubble Palette', 'Save an SHO narrowband image.', 400, (l, s) => s.finals.some((f) => (f.filter || []).includes('f_sii') || (f.filter || []).includes('SHO'))],
+  ['nb', 'Hubble Palette', 'Save an SHO narrowband image.', 400, (l, s) => s.finals.some((f) => (f.filter || []).some((x) => x === 'f_sii' || x === 'f_sii3' || x === 'SHO'))],
   ['nights10', 'Regular', 'Spend 10 nights observing.', 300, (l, s) => s.stats.nights >= 10],
 ];
 
