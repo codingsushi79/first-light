@@ -172,9 +172,15 @@ export function findLocal(q) {
 
 // Resolve ANY object name through CDS Sesame (SIMBAD / NED / VizieR)
 export async function sesame(name) {
-  const url = `https://cds.unistra.fr/cgi-bin/nph-sesame/-ox/SNV?${encodeURIComponent(name)}`;
-  const r = await fetch(url);
-  const txt = await r.text();
+  // CDS first, then its Harvard mirror (CDS has outages)
+  let txt = '';
+  for (const host of ['https://cds.unistra.fr/cgi-bin', 'https://vizier.cfa.harvard.edu/viz-bin']) {
+    try {
+      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 8000);
+      try { txt = await (await fetch(`${host}/nph-sesame/-ox/SNV?${encodeURIComponent(name)}`, { signal: ctl.signal })).text(); } finally { clearTimeout(to); }
+      break;
+    } catch (e) { if (host.includes('harvard')) throw e; }
+  }
   const ra = /<jradeg>([^<]+)</.exec(txt), dec = /<jdedeg>([^<]+)</.exec(txt);
   if (!ra || !dec) return null;
   const otype = /<otype>([^<]+)</.exec(txt), oname = /<oname>([^<]+)</.exec(txt);

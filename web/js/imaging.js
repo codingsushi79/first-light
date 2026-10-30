@@ -2,7 +2,7 @@
 let worker = null, seq = 0, initArgs = null, crashes = [];
 const pending = new Map();
 // Generous per-command time limits: a stuck request must never freeze the game clock.
-const LIMIT = { render: 120e3, view: 120e3, framing: 60e3, status: 10e3, init: 30e3, stack: 10 * 60e3 };
+const LIMIT = { render: 120e3, view: 120e3, framing: 120e3, status: 10e3, init: 30e3, stack: 10 * 60e3 };
 
 function spawn() {
   worker = new Worker(new URL('./render-worker.js', import.meta.url), { type: 'module' });

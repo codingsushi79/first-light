@@ -6,8 +6,10 @@ import { mulberry32, gaussFactory, makeNoise, hashStr, smoothstep } from './util
 import { horizonAlt } from './gear.js';
 import { drawBodies, luckySeeing } from './bodies.js';
 import { auroraAt } from './aurora.js';
+import { renderHips, tileUrl } from './hips.js';
 
 const HIPS_DSS = 'CDS/P/DSS2/color', HIPS_MEL = 'CDS/P/Mellinger/color';
+const TILE_MIRROR = 'https://skies.esac.esa.int/DSSColor'; // ESA mirror of DSS2 color HiPS tiles (CORS-enabled)
 const K_OBJ = 0.251;      // photons/s/cm²/arcsec² per band at survey flux F=1 (≈16.5 mag/arcsec²)
 const PHI0 = 1.0e6;       // photons/s/cm² per band for a mag 0 source
 const LUT = new Float32Array(256);
@@ -20,29 +22,52 @@ let starCat = [];         // fallback bright-star catalog
 let offline = false;
 
 // ---------- survey fetch ----------
-async function fetchSurvey(ra, dec, fovDeg, N) {
-  const hips = fovDeg > 28 ? HIPS_MEL : HIPS_DSS;
-  const fov = Math.min(fovDeg, 150);
+let cdsDownUntil = 0;     // after a failed hips2fits request, skip CDS for a while
+
+async function fetchTimeout(url, ms) {
+  const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), ms);
+  try { return await fetch(url, { signal: ctl.signal }); } finally { clearTimeout(to); }
+}
+async function decodeRGBA(blob, w, h) {
+  const bmp = await createImageBitmap(blob);
+  const c = new OffscreenCanvas(w, h); const g = c.getContext('2d');
+  g.drawImage(bmp, 0, 0, w, h);
+  return g.getImageData(0, 0, w, h).data;
+}
+
+// CDS hips2fits cutout service: one request, server-side reprojection.
+async function fetchCutout(ra, dec, fov, N, hips) {
   const url = `https://alasky.cds.unistra.fr/hips-image-services/hips2fits?hips=${encodeURIComponent(hips)}&width=${N}&height=${N}&fov=${fov.toFixed(5)}&projection=TAN&coordsys=icrs&rotation_angle=0&ra=${ra.toFixed(5)}&dec=${dec.toFixed(5)}&format=jpg`;
-  const entry = { ra, dec, fov, N, hips, scale: (fov * 3600) / N, ready: null, key: url };
-  entry.ready = (async () => {
-    let img;
+  const r = await fetchTimeout(url, 15000);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return decodeRGBA(await r.blob(), N, N);
+}
+
+// Fallback: reproject DSS2 color tiles from a HiPS mirror ourselves.
+function fetchTiles(ra, dec, fov, N) {
+  return renderHips(ra, dec, fov, N, async (order, ipix) => {
     try {
-      // Never wait forever on the survey server: time out and fall back to catalog stars.
-      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 60000);
-      let r;
-      try { r = await fetch(url, { signal: ctl.signal }); } finally { clearTimeout(to); }
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const bmp = await createImageBitmap(await r.blob());
-      const c = new OffscreenCanvas(N, N); const g = c.getContext('2d');
-      g.drawImage(bmp, 0, 0, N, N);
-      img = g.getImageData(0, 0, N, N).data;
-      offline = false;
-    } catch (e) {
-      offline = true;
-      img = syntheticSky(ra, dec, fov, N);
-      entry.synthetic = true;
+      const r = await fetchTimeout(tileUrl(TILE_MIRROR, order, ipix), 20000);
+      return r.ok ? await decodeRGBA(await r.blob(), 512, 512) : null;
+    } catch { return null; }
+  });
+}
+
+async function fetchSurvey(ra, dec, fovDeg, N) {
+  const fov = Math.min(fovDeg, 150);
+  const entry = { ra, dec, fov, N, hips: fovDeg > 28 ? HIPS_MEL : HIPS_DSS, scale: (fov * 3600) / N, ready: null };
+  entry.ready = (async () => {
+    let img = null;
+    if (Date.now() > cdsDownUntil) {
+      try { img = await fetchCutout(ra, dec, fov, N, entry.hips); }
+      catch { cdsDownUntil = Date.now() + 10 * 60e3; }
     }
+    if (!img) {
+      entry.hips = HIPS_DSS;
+      try { img = await fetchTiles(ra, dec, fov, N); } catch { img = null; }
+    }
+    offline = !img;
+    if (!img) { img = syntheticSky(ra, dec, fov, N); entry.synthetic = true; }
     linearize(entry, img);
     return entry;
   })();

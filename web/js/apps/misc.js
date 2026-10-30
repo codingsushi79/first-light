@@ -91,7 +91,7 @@ export const framingApp = {
         h('button', { class: 'btn primary', onclick: () => { if (!center) return; setTarget({ id: (tgt && tgt.id) || 'Custom', name: (tgt && tgt.name) || 'Custom framing', ra: center.ra, dec: center.dec, size: tgt ? tgt.size : 0 }); toast('Target set — used by AstroCap sequencer & centering.'); } }, '★ Use this framing as target'),
         h('button', { class: 'btn', onclick: async () => { if (!center) return; setTarget({ id: (tgt && tgt.id) || 'Custom', name: (tgt && tgt.name) || 'Custom', ra: center.ra, dec: center.dec, size: tgt ? tgt.size : 0 }); RT.R.abort = false; try { await RT.centerOn(G.s.target, (m) => S.log(m)); toast('Centered.'); } catch (e) { toast(e.message, 'warn'); } } }, 'Slew & center now'),
         h('button', { class: 'btn', onclick: () => load() }, 'Reload survey image'))),
-      h('div', { class: 'muted small' }, 'Imagery: Digitized Sky Survey 2 (color) / Mellinger, via CDS hips2fits. Drag the image to move the frame center.'));
+      h('div', { class: 'muted small' }, 'Imagery: Digitized Sky Survey 2 (color) / Mellinger, via CDS hips2fits (ESA HiPS mirror as fallback). Drag the image to move the frame center.'));
     body.append(h('div', { class: 'fr-root' }, viewer.el, side));
     viewer.onClickImg = (x, y) => {
       if (!img) return;
