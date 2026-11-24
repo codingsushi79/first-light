@@ -67,7 +67,7 @@ millisecond frames). DeepStack → *Planetary videos* keeps the sharpest frames 
 PixelLab's **wavelets** bring the detail out. Low planets suffer atmospheric dispersion — use an ADC
 or *RGB align*.
 
-## New: the observing field
+## New in 0.4: the observing field
 - **Real-looking gear in 3D.** Every mount family is modelled: ball heads, star trackers on wedges, alt-az
   mounts, German equatorials with counterweights, harmonic mounts and observatory piers. Each comes in brand
   colours on a matching photo, aluminium, steel or carbon tripod. Refractors have dew shields and focusers,
@@ -138,5 +138,5 @@ Blue Marble), d3-celestial (Hipparcos-based stars, constellations, Milky Way out
 Push a version tag and GitHub Actions builds macOS (arm64 + x64), Windows and Linux and publishes a release:
 
 ```bash
-git tag v0.4.0 && git push origin v0.4.0
+git tag v0.5.0 && git push origin v0.5.0
 ```
