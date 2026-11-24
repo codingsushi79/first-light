@@ -8,7 +8,9 @@ import { GEAR, horizonAlt, rigInfo } from './gear.js';
 import { G, on, off } from './state.js';
 import * as S from './session.js';
 import * as MET from './meteors.js';
-import { makeNoise, mulberry32, hashStr } from './util.js';
+import { makeNoise, mulberry32, hashStr, smoothstep } from './util.js';
+import * as MD from './models.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const SKY_R = 900;
 const wrapPi = (a) => (Number.isFinite(a) ? ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI : 0);
@@ -25,15 +27,19 @@ export class World {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.append(this.renderer.domElement);
     this.scene = new THREE.Scene();
+    // a soft studio environment gives metal and glass something to reflect; dimmed to near nothing at night
+    const pm = new THREE.PMREMGenerator(this.renderer); this.scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture; pm.dispose();
+    this.scene.environmentIntensity = 0.06;
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.03, 3000);
     this.player = { pos: v3(0, 1.65, 1.6), yaw: 0.35, pitch: 0.25, vel: v3(0, 0, 0) };
     this.keys = {};
     this.running = false;
     this.locId = null; this.rigKey = null;
     this.hover = null; this.grab = false; this.flashlight = false;
+    this.bino = false; this.binoFov = 7.5; this.showConst = false; this.laserOn = false; this.seated = null;
     this.listeners = {};
     this.clock = new THREE.Clock();
     this.buildStatic();
@@ -152,7 +158,7 @@ export class World {
     // lights
     this.hemi = new THREE.HemisphereLight(0x8a9ac0, 0x2a3024, 1); sc.add(this.hemi);
     this.moonLight = new THREE.DirectionalLight(0xc8d0e8, 0); this.moonLight.castShadow = true;
-    this.moonLight.shadow.mapSize.set(1024, 1024); Object.assign(this.moonLight.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 80 });
+    this.moonLight.shadow.mapSize.set(2048, 2048); this.moonLight.shadow.bias = -0.0004; this.moonLight.shadow.normalBias = 0.02; Object.assign(this.moonLight.shadow.camera, { left: -9, right: 9, top: 9, bottom: -9, near: 1, far: 80 });
     sc.add(this.moonLight); sc.add(this.moonLight.target);
     this.lpLight = new THREE.HemisphereLight(0xffa860, 0x000000, 0.0); sc.add(this.lpLight);
     this.flash = new THREE.SpotLight(0xff1a00, 0, 14, 0.55, 0.6, 1.5); sc.add(this.flash); sc.add(this.flash.target);
@@ -163,7 +169,7 @@ export class World {
     for (let i = 0; i < 9000; i++) { const s = r(); g.fillStyle = `rgba(${20 + s * 50},${40 + s * 60},${15 + s * 25},${0.35 + r() * 0.4})`; g.fillRect(r() * 256, r() * 256, 1, 2 + r() * 3); }
     this.groundTex = new THREE.CanvasTexture(gc); this.groundTex.wrapS = this.groundTex.wrapT = THREE.RepeatWrapping; this.groundTex.repeat.set(120, 120); this.groundTex.colorSpace = THREE.SRGBColorSpace;
     this.groundMat = new THREE.MeshLambertMaterial({ map: this.groundTex, color: 0xffffff });
-    const ground = new THREE.Mesh(new THREE.CircleGeometry(400, 64), this.groundMat); ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; sc.add(ground); this.ground = ground;
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(800, 800).rotateX(-Math.PI / 2), this.groundMat); ground.receiveShadow = true; sc.add(ground); this.ground = ground;
 
     // site-specific scenery & rig get built in update()
     this.siteGroup = new THREE.Group(); sc.add(this.siteGroup);
@@ -191,6 +197,22 @@ export class World {
     });
     this.stars = new THREE.Points(geo, this.starMat); this.stars.frustumCulled = false; this.stars.renderOrder = -7;
     this.celestial.add(this.stars);
+    // The catalog stops at magnitude 6. Binoculars and pristine skies show far more, so fill in a statistical
+    // field of fainter stars (mag 6–9.5), crowded toward the galactic plane like the real sky.
+    {
+      const N = 90000, rnd = mulberry32(4242), fp = new Float32Array(N * 3), fc = new Float32Array(N * 3), fm = new Float32Array(N);
+      const aG = 192.85948 * A.D2R, dG = 27.12825 * A.D2R; let k = 0;
+      while (k < N) {
+        const ra = rnd() * 360, dec = Math.asin(rnd() * 2 - 1) * A.R2D; const d = dec * A.D2R;
+        const sb = Math.sin(d) * Math.sin(dG) + Math.cos(d) * Math.cos(dG) * Math.cos(ra * A.D2R - aG);
+        if (rnd() > 0.3 + 0.7 * Math.exp(-Math.abs(Math.asin(sb)) * A.R2D / 14)) continue;
+        const v = eqVec(ra, dec).multiplyScalar(SKY_R); fp.set([v.x, v.y, v.z], k * 3);
+        fc.set(bvToRGB(0.2 + rnd() * 1.2), k * 3);
+        fm[k] = 6 + Math.log10(1 + rnd() * (Math.pow(10, 0.46 * 3.5) - 1)) / 0.46; k++;
+      }
+      const fg = new THREE.BufferGeometry(); fg.setAttribute('position', new THREE.BufferAttribute(fp, 3)); fg.setAttribute('color', new THREE.BufferAttribute(fc, 3)); fg.setAttribute('mag', new THREE.BufferAttribute(fm, 1));
+      this.faint = new THREE.Points(fg, this.starMat); this.faint.frustumCulled = false; this.faint.renderOrder = -7; this.celestial.add(this.faint);
+    }
     // Milky Way texture from the catalog outline (equirectangular in RA/Dec)
     const W = 2048, H = 1024; const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
     g.fillStyle = '#000'; g.fillRect(0, 0, W, H); g.filter = 'blur(9px)';
@@ -209,35 +231,53 @@ export class World {
   }
 
   buildTable() {
-    const t = new THREE.Group(); t.position.set(1.35, 0, -0.6); t.rotation.y = -0.5;
-    const wood = new THREE.MeshLambertMaterial({ color: 0x3a3632 });
-    const top = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.03, 0.6), wood); top.position.y = 0.72; top.castShadow = top.receiveShadow = true; t.add(top);
-    for (const [x, z] of [[-0.4, -0.25], [0.4, -0.25], [-0.4, 0.25], [0.4, 0.25]]) { const l = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.72), wood); l.position.set(x, 0.36, z); t.add(l); }
-    // laptop
-    const lap = new THREE.Group(); lap.position.set(0, 0.735, 0.03); t.add(lap);
-    const alu = new THREE.MeshStandardMaterial({ color: 0x9a9ea6, metalness: 0.7, roughness: 0.35 });
-    const base = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.016, 0.23), alu); base.position.y = 0.008; lap.add(base);
-    const kb = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.1), new THREE.MeshLambertMaterial({ color: 0x111111 })); kb.rotation.x = -Math.PI / 2; kb.position.set(0, 0.0165, -0.01); lap.add(kb);
-    const lid = new THREE.Group(); lid.position.set(0, 0.016, -0.115); lid.rotation.x = 0.28; lap.add(lid);
-    const back = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.008), alu); back.position.set(0, 0.11, -0.004); lid.add(back);
     this.screenCanvas = document.createElement('canvas'); this.screenCanvas.width = 640; this.screenCanvas.height = 400;
     this.screenTex = new THREE.CanvasTexture(this.screenCanvas); this.screenTex.colorSpace = THREE.SRGBColorSpace;
-    const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.31, 0.194), new THREE.MeshBasicMaterial({ map: this.screenTex, toneMapped: false }));
-    screen.position.set(0, 0.112, 0.0005); lid.add(screen);
-    for (const m of [base, back, screen, kb]) m.userData.action = 'laptop';
-    this.screenLight = new THREE.PointLight(0x6080ff, 0.25, 2.5, 2); this.screenLight.position.set(0, 0.15, 0.15); lid.add(this.screenLight);
-    // red headlamp on the table
-    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.02), new THREE.MeshBasicMaterial({ color: 0x550000 })); lamp.position.set(0.32, 0.75, 0.18); t.add(lamp);
-    this.table = t; this.laptop = lap; this.laptopScreen = screen;
+    const out = MD.buildCampTable(this.screenTex); const t = out.group;
+    t.position.set(1.35, 0, -0.6); t.rotation.y = -0.5;
+    this.screenLight = new THREE.PointLight(0x6080ff, 0.25, 2.5, 2); this.screenLight.position.set(0, 0.15, 0.15); out.lid.add(this.screenLight);
+    const chair = MD.buildCampChair(); chair.position.set(0.12, 0, 0.66); chair.rotation.y = Math.PI + 0.15; t.add(chair); this.chair = chair;
+    const cs = MD.buildGearCase(); cs.position.set(-0.78, 0, 0.5); cs.rotation.y = 0.5; t.add(cs);
+    const cs2 = MD.buildGearCase(0x3a2f24); cs2.scale.setScalar(0.7); cs2.position.set(-0.76, 0.3, 0.48); cs2.rotation.y = 0.3; t.add(cs2);
+    this.table = t; this.laptop = out.laptop; this.laptopScreen = out.screen; this.lantern = out.lantern;
     this.scene.add(t);
+  }
+
+  // ------------------------------------------------------------ ground
+  // Flat where you stand; rolling further out. Heights also seat trees, rocks and buildings.
+  groundH(x, z) {
+    const r = Math.hypot(x, z); const f = this._gShape || {};
+    if (f.flat) return 0;
+    let h = smoothstep(14, 50, r) * (this._gNoise.fbm(x / 34 + 3, z / 34 + 7, 3) - 0.42) * (f.amp ?? 1.8);
+    if (f.coast) h -= 1.4 * smoothstep(8, 40, z);
+    for (const d of f.dips || []) { const dd = Math.hypot(x - d.x, z - d.z); h = THREE.MathUtils.lerp(-d.depth, h, smoothstep(d.r * 0.85, d.r * 1.15, dd)); }
+    return h;
+  }
+  buildGround(biome, shape) {
+    this._gNoise = this._gNoise || makeNoise(17);
+    this._gShape = shape;
+    const geo = new THREE.PlaneGeometry(800, 800, 180, 180); geo.rotateX(-Math.PI / 2);
+    const pos = geo.attributes.position; const col = new Float32Array(pos.count * 3); const nz = this._gNoise;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), z = pos.getZ(i);
+      pos.setY(i, this.groundH(x, z));
+      const v = 0.72 + 0.42 * nz.fbm(x / 11, z / 11, 3) + 0.12 * (nz.noise(x / 2.5, z / 2.5) - 0.5);
+      col[i * 3] = v * (biome === 'snow' ? 1 : 1.02); col[i * 3 + 1] = v; col[i * 3 + 2] = v * (biome === 'snow' ? 1.03 : 0.95);
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3)); geo.computeVertexNormals();
+    this.ground.geometry.dispose(); this.ground.geometry = geo;
   }
 
   // ------------------------------------------------------------ site
   buildSite(locId) {
     const loc = S.locNow();
     this.locId = locId;
-    const grp = this.siteGroup; grp.clear();
+    const grp = this.siteGroup; grp.clear(); this.grass = null;
     const rnd = mulberry32(hashStr('site' + locId));
+    const biome = loc.biome || 'field';
+    const lake = biome === 'snow' ? altAzToVec(0, 200, 85) : null;
+    this.buildGround(biome, { flat: biome === 'city', amp: { mountain: 3.2, snow: 2.6, desert: 1.4, observatory: 2.4, coast: 0.8 }[biome] ?? 1.8, coast: biome === 'coast', dips: lake ? [{ x: lake.x, z: lake.z, r: 60, depth: 0.25 }] : [] });
+    const gy = (x, z) => this.groundH(x, z);
     // horizon silhouette ring exactly matching the simulated horizon profile
     const D = 260, segs = 360; const posArr = []; const idx = [];
     for (let i = 0; i <= segs; i++) {
@@ -249,49 +289,55 @@ export class World {
     const hg = new THREE.BufferGeometry(); hg.setAttribute('position', new THREE.Float32BufferAttribute(posArr, 3)); hg.setIndex(idx); hg.computeVertexNormals();
     const silhouette = new THREE.Mesh(hg, new THREE.MeshLambertMaterial({ color: 0x0b120c, side: THREE.DoubleSide }));
     grp.add(silhouette);
-    const biome = loc.biome || 'field';
-    const GROUND = { suburb: 0x3c5230, city: 0x6a6a6e, forest: 0x34482a, field: 0x46582f, mountain: 0x5a5448, observatory: 0x6b5a4a, desert: 0xb59a6a, snow: 0xe8eef4, coast: 0x8c7d5c };
-    this.groundMat.map = this.groundTexture(biome); this.groundMat.color.set(0xffffff); this.groundMat.needsUpdate = true; void GROUND;
+    this.groundMat.map = this.groundTexture(biome); this.groundMat.color.set(0xffffff); this.groundMat.vertexColors = true; this.groundMat.needsUpdate = true;
     silhouette.material.color.set({ desert: 0x2a2018, observatory: 0x1e1814, mountain: 0x161614, snow: 0x30363e, city: 0x07080a, coast: 0x0b100c }[biome] || 0x0b120c);
-    const treeMat = new THREE.MeshLambertMaterial({ color: biome === 'snow' ? 0x1a2a20 : 0x14200f }), trunkMat = new THREE.MeshLambertMaterial({ color: 0x2a1d14 });
-    const snowCap = new THREE.MeshLambertMaterial({ color: 0xe8eef6 });
-    const addTree = (x, z, hgt, snowy) => {
-      const tr = new THREE.Group(); tr.position.set(x, 0, z);
-      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, hgt * 0.35), trunkMat); trunk.position.y = hgt * 0.175; tr.add(trunk);
-      for (let k = 0; k < 3; k++) { const c = new THREE.Mesh(new THREE.ConeGeometry(hgt * (0.32 - k * 0.07), hgt * 0.45, 9), k === 2 && snowy ? snowCap : treeMat); c.position.y = hgt * (0.4 + k * 0.18); c.castShadow = true; tr.add(c); }
-      grp.add(tr);
+    const conColors = biome === 'snow' ? [0x1a2a20, 0x1e3024] : [0x14200f, 0x18281a, 0x1b2a14, 0x223318];
+    const leafColors = [0x2a3d1c, 0x334a22, 0x263a1e, 0x3a4a24];
+    const place = (o, x, z, sink = 0.05) => { o.position.set(x, gy(x, z) - sink, z); o.traverse((m) => { if (m.isMesh) m.castShadow = true; }); grp.add(o); return o; };
+    const addTree = (x, z, hgt, snowy, kind) => place((kind || (rnd() < 0.5 ? 'con' : 'leaf')) === 'con' ? MD.conifer(rnd, hgt, snowy, conColors) : MD.broadleaf(rnd, hgt, leafColors), x, z);
+    const rockM = new THREE.MeshLambertMaterial({ color: biome === 'desert' ? 0x7a6448 : biome === 'snow' ? 0x5a5f66 : 0x55504a, flatShading: true });
+    const addRocks = (n, dmin, dmax, smax) => { for (let i = 0; i < n; i++) { const a = rnd() * 360, d = dmin + rnd() * (dmax - dmin); const p = altAzToVec(0, a, d); const r = new THREE.Mesh(new THREE.DodecahedronGeometry(0.2 + rnd() * smax, 1), rockM); r.scale.set(1, 0.55 + rnd() * 0.4, 0.8 + rnd() * 0.4); r.position.set(p.x, gy(p.x, p.z) + 0.02, p.z); r.rotation.set(rnd(), rnd(), rnd()); r.castShadow = r.receiveShadow = true; grp.add(r); } };
+    const addGrass = (n, pal, rMax = 38, h = 0.32) => {
+      const tableP = this.table.position; const avoid = (x, z) => (biome === 'coast' && z > 6) || Math.hypot(x - tableP.x, z - tableP.z) < 0.55 || Math.hypot(x, z + 1.2) < 0.35;
+      const gf = MD.grassField(n, 0.4, rMax, rnd, pal, gy, avoid, h); grp.add(gf.mesh); this.grass = gf;
     };
-    const rockM = new THREE.MeshLambertMaterial({ color: biome === 'desert' ? 0x7a6448 : biome === 'snow' ? 0x5a5f66 : 0x55504a });
-    const addRocks = (n, dmin, dmax, smax) => { for (let i = 0; i < n; i++) { const a = rnd() * 360, d = dmin + rnd() * (dmax - dmin); const p = altAzToVec(0, a, d); const r = new THREE.Mesh(new THREE.DodecahedronGeometry(0.2 + rnd() * smax), rockM); r.position.set(p.x, 0.05, p.z); r.rotation.set(rnd(), rnd(), rnd()); r.castShadow = true; grp.add(r); } };
     const windowTex = (lit) => {
       const c = document.createElement('canvas'); c.width = 128; c.height = 256; const g = c.getContext('2d');
       g.fillStyle = '#121418'; g.fillRect(0, 0, 128, 256);
       for (let y = 6; y < 250; y += 12) for (let x = 6; x < 124; x += 12) { g.fillStyle = rnd() < lit ? `hsl(${35 + rnd() * 20},${60 + rnd() * 30}%,${55 + rnd() * 25}%)` : '#1c2026'; g.fillRect(x, y, 7, 8); }
       const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
     };
+    const addCar = (x, z, rot = 0.7) => { const c = MD.car(rnd, [0x223044, 0x5a1a1a, 0x2b2d31, 0x8a8f96, 0x1d3a2a][Math.floor(rnd() * 5)]); c.rotation.y = rot; place(c, x, z, 0); };
     if (biome === 'suburb') {
-      // house with a porch light, fence, trees, street light glow
-      const house = new THREE.Group(); const hp = altAzToVec(0, 45, 24); house.position.set(hp.x, 0, hp.z); house.lookAt(0, 0, 0);
-      const wall = new THREE.MeshLambertMaterial({ color: 0x5a5550 }); const roofM = new THREE.MeshLambertMaterial({ color: 0x2a2626 });
-      const body = new THREE.Mesh(new THREE.BoxGeometry(12, 5.5, 8), wall); body.position.y = 2.75; body.castShadow = body.receiveShadow = true; house.add(body);
-      const roof = new THREE.Mesh(new THREE.ConeGeometry(8, 2.8, 4), roofM); roof.position.y = 6.9; roof.rotation.y = Math.PI / 4; roof.scale.set(1.05, 1, 0.72); house.add(roof);
-      const winM = new THREE.MeshBasicMaterial({ color: 0xffc070, toneMapped: false });
-      for (const [x, y] of [[-3, 1.6], [3.5, 1.6], [-3, 4.2], [2, 4.2]]) { const w = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.1), rnd() > 0.4 ? winM : new THREE.MeshLambertMaterial({ color: 0x111418 })); w.position.set(x, y, 4.01); house.add(w); }
-      const porch = new THREE.PointLight(0xffb060, 6, 30, 1.6); porch.position.set(0.5, 2.4, 4.6); house.add(porch);
+      const hp = altAzToVec(0, 45, 24); const house = MD.house(rnd); house.lookAt(hp.clone().multiplyScalar(-1)); place(house, hp.x, hp.z, 0.15);
+      const porch = new THREE.PointLight(0xffb060, 6, 30, 1.6); porch.position.set(0.9, 2.6, 4.5); house.add(porch);
       const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.08), new THREE.MeshBasicMaterial({ color: 0xfff0c0, toneMapped: false })); bulb.position.copy(porch.position); house.add(bulb);
-      grp.add(house);
-      const fenceM = new THREE.MeshLambertMaterial({ color: 0x3b3128 });
-      for (let a = 100; a < 330; a += 2.2) { const p = altAzToVec(0, a, 14); const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.8, 0.12), fenceM); post.position.set(p.x, 0.9, p.z); grp.add(post); }
-      for (const a of [250, 280, 20, 140]) { const p = altAzToVec(0, a, 18 + rnd() * 10); addTree(p.x, p.z, 9 + rnd() * 6); }
-      const sp = altAzToVec(0, loc.lpAz, 30); const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 7), new THREE.MeshLambertMaterial({ color: 0x222222 })); pole.position.set(sp.x, 3.5, sp.z); grp.add(pole);
-      const sl = new THREE.PointLight(0xffaa55, 14, 45, 1.4); sl.position.set(sp.x, 7, sp.z); grp.add(sl);
-      const lb = new THREE.Mesh(new THREE.SphereGeometry(0.25), new THREE.MeshBasicMaterial({ color: 0xffd9a0, toneMapped: false })); lb.position.copy(sl.position); grp.add(lb);
+      MD.fence(grp, 100, 330, 14, altAzToVec, rnd);
+      for (const a of [250, 280, 20, 140, 320, 200]) { const p = altAzToVec(0, a, 18 + rnd() * 12); addTree(p.x, p.z, 8 + rnd() * 6, false, a === 280 ? 'con' : 'leaf'); }
+      // street light on a curved arm
+      const sp = altAzToVec(0, loc.lpAz, 30); const poleM = new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.6, metalness: 0.5 });
+      const sx = sp.x, sz = sp.z, base = gy(sx, sz);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.11, 7.2, 10), poleM); pole.position.set(sx, base + 3.6, sz); grp.add(pole);
+      const inward = v3(-sx, 0, -sz).normalize();
+      const arm = MD.rod(v3(sx, base + 7.1, sz), v3(sx, base + 7.1, sz).addScaledVector(inward, 1.4).add(v3(0, 0.25, 0)), 0.04, 0.035, poleM); grp.add(arm);
+      const lp = v3(sx, base + 7.3, sz).addScaledVector(inward, 1.5);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.12, 0.28), poleM); head.position.copy(lp); head.lookAt(lp.clone().add(inward)); grp.add(head);
+      const sl = new THREE.PointLight(0xffaa55, 14, 45, 1.4); sl.position.copy(lp).add(v3(0, -0.15, 0)); grp.add(sl);
+      const lb = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.03, 0.2), new THREE.MeshBasicMaterial({ color: 0xffd9a0, toneMapped: false })); lb.position.copy(lp).add(v3(0, -0.07, 0)); lb.quaternion.copy(head.quaternion); grp.add(lb);
+      addGrass(16000, [[62, 84, 44], [112, 142, 78]], 26, 0.13);
+      addCar(-9, 9, 2.2);
     } else if (biome === 'city') {
-      // a flat rooftop with a parapet, AC units, and a ring of lit skyscrapers
+      // a flat rooftop with a parapet, AC units, vents, and a ring of lit skyscrapers
       const para = new THREE.MeshLambertMaterial({ color: 0x4a4a50 });
       for (const [x, z, w, d] of [[0, -12, 24, 0.3], [0, 12, 24, 0.3], [-12, 0, 0.3, 24], [12, 0, 0.3, 24]]) { const m = new THREE.Mesh(new THREE.BoxGeometry(w, 1.1, d), para); m.position.set(x, 0.55, z); grp.add(m); }
       const acM = new THREE.MeshStandardMaterial({ color: 0x8a8d92, metalness: 0.6, roughness: 0.5 });
-      for (const [x, z] of [[-7, 6], [-5, 6], [7, -7]]) { const m = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.2, 1.6), acM); m.position.set(x, 0.6, z); m.castShadow = true; grp.add(m); }
+      for (const [x, z] of [[-7, 6], [-5, 6], [7, -7]]) {
+        const u = new THREE.Group(); u.position.set(x, 0, z);
+        u.add(MD.box(1.6, 1.1, 1.6, acM, 0, 0.6, 0)); const fan = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.05, 24), new THREE.MeshStandardMaterial({ color: 0x1a1b1d })); fan.position.y = 1.16; u.add(fan);
+        for (let i = 0; i < 4; i++) { const leg = MD.box(0.08, 0.1, 0.08, acM, (i % 2 ? 0.7 : -0.7), 0.05, (i > 1 ? 0.7 : -0.7)); u.add(leg); }
+        grp.add(u);
+      }
+      for (const [x, z] of [[3, -9], [-9, -3]]) { const vent = MD.cylY(0.18, 0.18, 1.2, acM, 0.6, 12); vent.position.set(x, 0.6, z); grp.add(vent); }
       const stair = new THREE.Mesh(new THREE.BoxGeometry(3, 2.8, 3), para); stair.position.set(8, 1.4, 8); grp.add(stair);
       const door = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), new THREE.MeshBasicMaterial({ color: 0xffd9a0, toneMapped: false })); door.position.set(6.49, 1, 8); door.rotation.y = -Math.PI / 2; grp.add(door);
       const dl = new THREE.PointLight(0xffd9a0, 3, 12, 1.6); dl.position.set(6, 2.4, 8); grp.add(dl);
@@ -306,174 +352,95 @@ export class World {
       }
       silhouette.visible = false;
     } else if (biome === 'forest' || biome === 'field') {
-      const n = biome === 'forest' ? 46 : 16;
-      for (let i = 0; i < n; i++) { const a = rnd() * 360, d = (biome === 'forest' ? 22 : 45) + rnd() * 60; const p = altAzToVec(0, a, d); addTree(p.x, p.z, 8 + rnd() * 10); }
-      this.addCar(grp, 6, 3);
+      const n = biome === 'forest' ? 60 : 18;
+      for (let i = 0; i < n; i++) { const a = rnd() * 360, d = (biome === 'forest' ? 20 : 45) + rnd() * 60; const p = altAzToVec(0, a, d); addTree(p.x, p.z, 8 + rnd() * 10, false, biome === 'forest' ? (rnd() < 0.75 ? 'con' : 'leaf') : null); }
+      addRocks(biome === 'forest' ? 12 : 6, 8, 40, 0.6);
+      addGrass(biome === 'field' ? 15000 : 9000, biome === 'field' ? [[78, 88, 46], [150, 152, 88]] : [[50, 70, 40], [92, 122, 68]], 38, biome === 'field' ? 0.42 : 0.3);
+      addCar(6, 3);
     } else if (biome === 'mountain' || biome === 'snow') {
-      addRocks(55, 6, 140, 1.8);
-      for (let i = 0; i < (biome === 'snow' ? 30 : 10); i++) { const a = rnd() * 360, d = 25 + rnd() * 90; const p = altAzToVec(0, a, d); addTree(p.x, p.z, 5 + rnd() * 9, biome === 'snow' || loc.elev > 1500); }
-      if (biome === 'snow') { const lake = new THREE.Mesh(new THREE.CircleGeometry(60, 48), new THREE.MeshStandardMaterial({ color: 0x0a1018, metalness: 0.9, roughness: 0.08 })); lake.rotation.x = -Math.PI / 2; const lp = altAzToVec(0, 200, 85); lake.position.set(lp.x, 0.02, lp.z); grp.add(lake); }
-      this.addCar(grp, 7, 4);
+      addRocks(70, 5, 140, 1.8);
+      for (let i = 0; i < (biome === 'snow' ? 34 : 14); i++) { const a = rnd() * 360, d = 25 + rnd() * 90; const p = altAzToVec(0, a, d); if (lake && Math.hypot(p.x - lake.x, p.z - lake.z) < 64) continue; addTree(p.x, p.z, 5 + rnd() * 9, biome === 'snow' || loc.elev > 1500, 'con'); }
+      if (lake) { const lk = new THREE.Mesh(new THREE.CircleGeometry(60, 48), new THREE.MeshStandardMaterial({ color: 0x0a1018, metalness: 0.9, roughness: 0.08 })); lk.rotation.x = -Math.PI / 2; lk.position.set(lake.x, -0.12, lake.z); grp.add(lk); }
+      if (biome === 'mountain') addGrass(4000, [[86, 82, 56], [150, 138, 94]], 30, 0.22);
+      addCar(7, 4);
     } else if (biome === 'observatory') {
-      addRocks(45, 8, 120, 1.6);
+      addRocks(55, 8, 120, 1.6);
       const domeM = new THREE.MeshStandardMaterial({ color: 0xe9ebef, metalness: 0.4, roughness: 0.35 });
       for (const [a, d, r] of [[60, 70, 9], [100, 110, 14], [140, 60, 6], [300, 90, 11], [330, 160, 18]]) {
-        const p = altAzToVec(0, a, d); const b = new THREE.Group(); b.position.set(p.x, 0, p.z);
+        const p = altAzToVec(0, a, d); const b = new THREE.Group();
         const cyl = new THREE.Mesh(new THREE.CylinderGeometry(r, r, r * 0.9, 40), domeM); cyl.position.y = r * 0.45; b.add(cyl);
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.03, r * 1.05, r * 0.12, 40), new THREE.MeshLambertMaterial({ color: 0x77716a })); base.position.y = r * 0.06; b.add(base);
         const dome = new THREE.Mesh(new THREE.SphereGeometry(r, 40, 20, 0, Math.PI * 2, 0, Math.PI / 2), domeM); dome.position.y = r * 0.9; b.add(dome);
         const slit = new THREE.Mesh(new THREE.BoxGeometry(r * 0.35, r * 0.05, r * 2.02), new THREE.MeshBasicMaterial({ color: 0x050608 })); slit.position.y = r * 1.75; b.add(slit);
-        grp.add(b);
+        const door = new THREE.Mesh(new THREE.PlaneGeometry(r * 0.16, r * 0.3), new THREE.MeshLambertMaterial({ color: 0x3a3d44 })); door.position.set(0, r * 0.17, r * 1.001); b.add(door);
+        b.position.set(p.x, 0, p.z); b.lookAt(0, 0, 0); place(b, p.x, p.z, 0.3);
       }
-      this.addCar(grp, 7, 4);
+      addGrass(2200, [[96, 80, 56], [162, 138, 98]], 30, 0.2);
+      addCar(7, 4);
     } else if (biome === 'desert') {
       addRocks(45, 8, 140, 1.5);
-      if (loc.lon < -30 && loc.lat > 15) for (let i = 0; i < 14; i++) { const a = rnd() * 360, d = 12 + rnd() * 60; const p = altAzToVec(0, a, d); const c = new THREE.Group(); c.position.set(p.x, 0, p.z); const cm = new THREE.MeshLambertMaterial({ color: 0x24361e }); const t = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.3, 3 + rnd() * 2), cm); t.position.y = 1.6; c.add(t); const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 1.2), cm); arm.position.set(0.45, 2, 0); c.add(arm); grp.add(c); }
-      this.addCar(grp, 7, 4);
+      if (loc.lon < -30 && loc.lat > 15) for (let i = 0; i < 16; i++) {
+        const a = rnd() * 360, d = 12 + rnd() * 60; const p = altAzToVec(0, a, d); const c = new THREE.Group(); const cm = new THREE.MeshLambertMaterial({ color: 0x2b3f22, flatShading: true });
+        const H = 3 + rnd() * 3; c.add(MD.cylY(0.24, 0.3, H, cm, H / 2, 10)); c.add(MD.sphere(0.24, cm, 0, H, 0, 10, 6));
+        for (let k = 0; k < 1 + Math.floor(rnd() * 3); k++) { const ang = rnd() * 6.28, y0 = H * (0.35 + rnd() * 0.3), out = 0.55 + rnd() * 0.2, up = 0.8 + rnd() * 1.2; const dx = Math.cos(ang), dz = Math.sin(ang);
+          c.add(MD.rod(v3(0, y0, 0), v3(dx * out, y0 + 0.1, dz * out), 0.16, 0.16, cm, 8)); c.add(MD.rod(v3(dx * out, y0, dz * out), v3(dx * out, y0 + up, dz * out), 0.16, 0.15, cm, 8)); c.add(MD.sphere(0.15, cm, dx * out, y0 + up, dz * out, 8, 6)); }
+        place(c, p.x, p.z, 0.05);
+      }
+      addGrass(800, [[112, 94, 62], [178, 156, 106]], 30, 0.2);
+      addCar(7, 4);
     } else if (biome === 'coast') {
-      const sea = new THREE.Mesh(new THREE.PlaneGeometry(900, 450), new THREE.MeshStandardMaterial({ color: 0x050c14, metalness: 0.85, roughness: 0.15 })); sea.rotation.x = -Math.PI / 2; sea.position.set(0, 0.05, 240); grp.add(sea);
-      addRocks(20, 6, 40, 1.2); this.addCar(grp, 6, -4);
+      const sea = new THREE.Mesh(new THREE.PlaneGeometry(900, 450), new THREE.MeshStandardMaterial({ color: 0x050c14, metalness: 0.85, roughness: 0.15 })); sea.rotation.x = -Math.PI / 2; sea.position.set(0, -0.45, 240); grp.add(sea);
+      addRocks(20, 6, 40, 1.2); addGrass(3500, [[108, 100, 70], [172, 162, 112]], 28, 0.38); addCar(6, -4, 0.4);
     }
   }
   groundTexture(biome) {
     this._gtex = this._gtex || {};
     if (this._gtex[biome]) return this._gtex[biome];
-    const pal = { suburb: ['#3c5230', [20, 40, 15], [50, 60, 25]], forest: ['#34482a', [20, 35, 15], [45, 55, 25]], field: ['#4a5a30', [30, 40, 15], [60, 60, 25]],
+    const pal = { suburb: ['#3c5230', [20, 40, 15], [50, 60, 25]], forest: ['#34482a', [25, 30, 15], [45, 45, 25]], field: ['#4a5a30', [30, 40, 15], [60, 60, 25]],
       city: ['#55565a', [70, 70, 72], [25, 25, 25]], mountain: ['#5a5448', [60, 55, 48], [35, 32, 28]], observatory: ['#6b5444', [80, 60, 45], [30, 25, 20]],
       desert: ['#b09060', [170, 140, 95], [35, 30, 20]], snow: ['#dfe6ee', [215, 222, 232], [25, 25, 25]], coast: ['#8c7d5c', [140, 125, 92], [30, 28, 22]] }[biome] || ['#3c5230', [20, 40, 15], [50, 60, 25]];
-    const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d'); const r = mulberry32(hashStr('g' + biome));
-    g.fillStyle = pal[0]; g.fillRect(0, 0, 256, 256);
-    for (let i = 0; i < 9000; i++) { const s = r(); g.fillStyle = `rgba(${pal[1][0] + s * pal[2][0]},${pal[1][1] + s * pal[2][1]},${pal[1][2] + s * pal[2][2]},${0.3 + r() * 0.4})`; if (biome === 'suburb' || biome === 'forest' || biome === 'field') g.fillRect(r() * 256, r() * 256, 1, 2 + r() * 3); else g.fillRect(r() * 256, r() * 256, 1 + r() * 2, 1 + r() * 2); }
-    if (biome === 'city') { g.strokeStyle = 'rgba(30,30,32,.6)'; for (let i = 0; i <= 256; i += 64) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 256); g.moveTo(0, i); g.lineTo(256, i); g.stroke(); } }
-    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(biome === 'city' ? 40 : 120, biome === 'city' ? 40 : 120); t.colorSpace = THREE.SRGBColorSpace;
+    const S2 = 512; const c = document.createElement('canvas'); c.width = c.height = S2; const g = c.getContext('2d'); const r = mulberry32(hashStr('g' + biome));
+    g.fillStyle = pal[0]; g.fillRect(0, 0, S2, S2);
+    const grassy = biome === 'suburb' || biome === 'forest' || biome === 'field';
+    // soft dirt / pebble patches, tileable via wrap-around drawing
+    const blot = (x, y, rad, col) => { for (const ox of [-S2, 0, S2]) for (const oy of [-S2, 0, S2]) { const gr = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, rad); gr.addColorStop(0, col); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(x + ox - rad, y + oy - rad, rad * 2, rad * 2); } };
+    for (let i = 0; i < 26; i++) blot(r() * S2, r() * S2, 20 + r() * 60, grassy ? `rgba(${60 + r() * 30},${50 + r() * 20},${30},${0.12 + r() * 0.12})` : `rgba(${pal[1][0] * 0.8},${pal[1][1] * 0.8},${pal[1][2] * 0.8},${0.15 + r() * 0.15})`);
+    for (let i = 0; i < 36000; i++) { const s = r(); g.fillStyle = `rgba(${pal[1][0] + s * pal[2][0]},${pal[1][1] + s * pal[2][1]},${pal[1][2] + s * pal[2][2]},${0.3 + r() * 0.45})`; if (grassy) { g.save(); g.translate(r() * S2, r() * S2); g.rotate((r() - 0.5) * 0.9); g.fillRect(0, 0, 1, 2 + r() * 5); g.restore(); } else g.fillRect(r() * S2, r() * S2, 1 + r() * 2.5, 1 + r() * 2.5); }
+    if (!grassy && biome !== 'snow') for (let i = 0; i < 500; i++) { const x = r() * S2, y = r() * S2, s = 1.5 + r() * 3; g.fillStyle = `rgba(${pal[1][0] * 0.55},${pal[1][1] * 0.55},${pal[1][2] * 0.55},0.6)`; g.beginPath(); g.ellipse(x, y, s, s * 0.7, r() * 3, 0, 7); g.fill(); g.fillStyle = 'rgba(255,255,255,0.12)'; g.beginPath(); g.ellipse(x - s * 0.2, y - s * 0.2, s * 0.5, s * 0.3, 0, 0, 7); g.fill(); }
+    if (biome === 'city') { g.strokeStyle = 'rgba(30,30,32,.6)'; g.lineWidth = 2; for (let i = 0; i <= S2; i += 128) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, S2); g.moveTo(0, i); g.lineTo(S2, i); g.stroke(); } }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(biome === 'city' ? 40 : 90, biome === 'city' ? 40 : 90); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
     return (this._gtex[biome] = t);
-  }
-  addCar(grp, x, z) {
-    const car = new THREE.Group(); car.position.set(x, 0, z); car.rotation.y = 0.7;
-    const m = new THREE.MeshStandardMaterial({ color: 0x223044, metalness: 0.6, roughness: 0.4 });
-    const b = new THREE.Mesh(new THREE.BoxGeometry(4.3, 0.8, 1.8), m); b.position.y = 0.65; car.add(b);
-    const t = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.6, 1.7), m); t.position.set(-0.2, 1.35, 0); car.add(t);
-    const wm = new THREE.MeshLambertMaterial({ color: 0x111111 });
-    for (const [px, pz] of [[-1.4, 0.9], [1.4, 0.9], [-1.4, -0.9], [1.4, -0.9]]) { const w = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.25, 16), wm); w.rotation.x = Math.PI / 2; w.position.set(px, 0.34, pz); car.add(w); }
-    car.traverse((o) => { if (o.isMesh) o.castShadow = true; });
-    grp.add(car);
   }
 
   // ------------------------------------------------------------ rig
   buildRig() {
     const rig = G.s.rig; const ri = rigInfo(rig);
     this.rigKey = JSON.stringify(rig);
-    const R = this.rigGroup; R.clear();
+    const R = this.rigGroup; R.clear(); this.usb = null;
     const mount = ri.mount; const loc = S.locNow();
-    const black = new THREE.MeshStandardMaterial({ color: 0x1a1a1c, roughness: 0.5, metalness: 0.3 });
-    const white = new THREE.MeshStandardMaterial({ color: 0xe8e8ea, roughness: 0.4, metalness: 0.1 });
-    const metal = new THREE.MeshStandardMaterial({ color: 0x8a8d94, roughness: 0.3, metalness: 0.85 });
-    const red = new THREE.MeshStandardMaterial({ color: 0xb01818, roughness: 0.4, metalness: 0.3 });
-    const blue = new THREE.MeshStandardMaterial({ color: 0x1d3f8a, roughness: 0.4, metalness: 0.4 });
-    const tag = (m, a) => { m.userData.action = a; m.castShadow = true; return m; };
-    const heavy = mount.type === 'eq' && mount.payload >= 9;
-    const headH = mount.type === 'fixed' ? 1.35 : heavy ? 1.05 : 1.15;
-    // tripod
-    const legR = heavy ? 0.025 : 0.014;
-    for (let i = 0; i < 3; i++) {
-      const a = (i / 3) * Math.PI * 2 + 0.3, spread = heavy ? 0.55 : 0.45;
-      const foot = v3(Math.cos(a) * spread, 0, Math.sin(a) * spread), top = v3(Math.cos(a) * 0.06, headH - 0.06, Math.sin(a) * 0.06);
-      const len = foot.distanceTo(top); const leg = new THREE.Mesh(new THREE.CylinderGeometry(legR, legR * 0.8, len, 8), heavy ? metal : black);
-      leg.position.copy(foot.clone().add(top).multiplyScalar(0.5)); leg.lookAt(top); leg.rotateX(Math.PI / 2); R.add(tag(leg, 'mount'));
+    const st = MD.mountStyle(mount);
+    const tri = MD.buildTripod(st.tripod); R.add(tri.group);
+    const { head, refs } = MD.buildMountHead(mount, loc, st); head.position.y = tri.headH; R.add(head);
+    if (mount.goto && st.kind === 'gem' && st.tripod !== 'pier') R.add(MD.buildHandController(tri));
+    const o = MD.buildOTA(ri); R.add(o.group);
+    Object.assign(refs, o.refs, { ota: o.group, mountPoint: o.mountPoint, headH: tri.headH, apex: tri.apex });
+    if (ri.hasPower) {
+      const ps = MD.buildPowerStation(); ps.position.set(0.55, 0, 0.3); ps.rotation.y = -0.7; R.add(ps);
+      R.add(MD.cable(v3(0.47, 0.16, 0.37), tri.apex.clone().add(v3(0.02, 0, 0.02)), 0.25, 0.004));
     }
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(heavy ? 0.12 : 0.07, heavy ? 0.12 : 0.07, 0.06, 16), black); hub.position.y = headH - 0.03; R.add(tag(hub, 'mount'));
-    const refs = { headH };
-    // mount head
-    const head = new THREE.Group(); head.position.y = headH; R.add(head);
-    if (mount.type === 'eq') {
-      const south = loc.lat < 0;
-      const az = new THREE.Group(); az.rotation.y = south ? Math.PI : 0; head.add(az);
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(heavy ? 0.1 : 0.06, heavy ? 0.11 : 0.07, 0.08, 20), white); base.position.y = 0.04; az.add(tag(base, 'polar'));
-      const polar = new THREE.Group(); polar.position.y = 0.1; az.add(polar);
-      polar.rotation.x = -(90 - Math.abs(loc.lat)) * A.D2R;
-      const ra = new THREE.Mesh(new THREE.CylinderGeometry(heavy ? 0.075 : 0.045, heavy ? 0.075 : 0.045, heavy ? 0.32 : 0.2, 20), white); ra.position.y = heavy ? 0.12 : 0.08; polar.add(tag(ra, 'polar'));
-      if (mount.polarScope) { const ps = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.06, 12), black); ps.position.y = -0.05; polar.add(tag(ps, 'polar')); }
-      const raRot = new THREE.Group(); raRot.position.y = heavy ? 0.3 : 0.2; polar.add(raRot);
-      const decH = new THREE.Mesh(new THREE.CylinderGeometry(heavy ? 0.065 : 0.04, heavy ? 0.065 : 0.04, heavy ? 0.3 : 0.18, 20), white); decH.rotation.z = Math.PI / 2; raRot.add(tag(decH, 'mount'));
-      if (mount.payload >= 5 && mount.id !== 'harmonic') {
-        const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.45), metal); shaft.rotation.z = Math.PI / 2; shaft.position.x = -0.3; raRot.add(shaft);
-        const cw = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.07, 20), metal); cw.rotation.z = Math.PI / 2; cw.position.x = -0.42; raRot.add(cw);
-        refs.shaft = shaft; refs.cw = cw;
-        if (mount.payload >= 5 && mount.type === 'eq' && mount.id === 'tracker') { shaft.scale.y = 0.6; cw.scale.set(0.5, 0.5, 0.5); }
-      }
-      const saddle = new THREE.Object3D(); saddle.position.x = heavy ? 0.2 : 0.12; raRot.add(saddle);
-      refs.polar = polar; refs.raRot = raRot; refs.saddle = saddle; refs.south = south; refs.sadOff = saddle.position.x;
-    } else if (mount.type === 'altaz') {
-      const azRot = new THREE.Group(); head.add(azRot);
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.08, 20), black); base.position.y = 0.04; azRot.add(tag(base, 'mount'));
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.28, 0.1), black); arm.position.set(0.08, 0.2, 0); azRot.add(tag(arm, 'mount'));
-      const saddle = new THREE.Object3D(); saddle.position.set(0, 0.3, 0); azRot.add(saddle);
-      refs.azRot = azRot; refs.saddle = saddle;
-    } else {
-      const ball = new THREE.Mesh(new THREE.SphereGeometry(0.035, 16, 12), metal); ball.position.y = 0.04; head.add(tag(ball, 'mount'));
-      const saddle = new THREE.Object3D(); saddle.position.y = 0.09; head.add(saddle); refs.saddle = saddle;
-    }
-    // optical tube / lens + camera, built along +Z
-    const ota = new THREE.Group(); R.add(ota); refs.ota = ota;
-    const opt = ri.opt, cam = ri.cam;
-    let len, rad, frontZ;
-    if (!opt) { len = 0.1; rad = 0.03; }
-    else if (opt.type === 'lens') {
-      len = 0.05 + ri.focal * 0.00055 + (opt.id === 'lens_200' ? 0.05 : 0); rad = Math.max(0.03, Math.min(0.055, ri.D / 2000 + 0.02));
-      const lens = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad * 0.9, len, 28), black); lens.rotation.x = Math.PI / 2; lens.position.z = len / 2 + 0.04; ota.add(tag(lens, 'focus'));
-      const ring = new THREE.Mesh(new THREE.CylinderGeometry(rad * 1.04, rad * 1.04, len * 0.3, 28), new THREE.MeshStandardMaterial({ color: 0x0d0d0d, roughness: 0.9 })); ring.rotation.x = Math.PI / 2; ring.position.z = len * 0.65 + 0.04; ota.add(tag(ring, 'focus'));
-      if (opt.id === 'lens_135' || opt.id === 'lens_200') { const rl = new THREE.Mesh(new THREE.TorusGeometry(rad * 1.02, 0.002, 6, 32), red); rl.position.z = len + 0.035; ota.add(rl); }
-      frontZ = len + 0.04;
-    } else {
-      const D = opt.D / 1000; const flen = ri.focal / 1000;
-      const tubeMat = opt.type === 'refractor' ? white : opt.type === 'sct' || opt.type === 'rasa' || opt.type === 'mak' ? new THREE.MeshStandardMaterial({ color: 0x1c2a4a, metalness: 0.5, roughness: 0.4 }) : opt.type === 'rc' ? black : white;
-      if (opt.type === 'refractor') { len = flen * 0.8; rad = D / 2 + 0.012; }
-      else if (opt.type === 'newtonian') { len = flen * 1.02; rad = D / 2 + 0.02; }
-      else if (opt.type === 'sct' || opt.type === 'rasa' || opt.type === 'mak') { len = D * (opt.type === 'mak' ? 2.6 : 2.1); rad = D / 2 + 0.015; }
-      else { len = flen * 0.33; rad = D / 2 + 0.02; }
-      const tube = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, len, 40, 1, opt.type === 'newtonian'), tubeMat); tube.rotation.x = Math.PI / 2; tube.position.z = len / 2 + 0.06; ota.add(tag(tube, 'scope'));
-      if (opt.type === 'refractor') { const shield = new THREE.Mesh(new THREE.CylinderGeometry(rad * 1.06, rad * 1.06, D * 1.6, 40, 1, true), tubeMat); shield.rotation.x = Math.PI / 2; shield.position.z = len + 0.06 + D * 0.5; ota.add(tag(shield, 'scope')); }
-      const glass = new THREE.Mesh(new THREE.CircleGeometry(rad * 0.92, 40), new THREE.MeshStandardMaterial({ color: 0x0a1020, metalness: 0.9, roughness: 0.05, envMapIntensity: 1 })); glass.position.z = opt.type === 'newtonian' ? 0.08 : len + 0.055; ota.add(glass);
-      for (const s of [0.3, 0.7]) { const r2 = new THREE.Mesh(new THREE.TorusGeometry(rad + 0.012, 0.012, 8, 32), black); r2.position.z = 0.06 + len * s; ota.add(r2); }
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.015, len * 0.6), metal); bar.position.set(0, -rad - 0.02, 0.06 + len * 0.5); ota.add(bar);
-      frontZ = opt.type === 'refractor' ? len + 0.06 + D * 1.3 : len + 0.06;
-      if (opt.type === 'newtonian') { const f = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.08), black); f.position.set(0, rad + 0.04, len * 0.85); ota.add(tag(f, 'focus')); }
-      else { const f = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.12, 20), black); f.rotation.x = Math.PI / 2; f.position.z = 0.0; ota.add(tag(f, 'focus')); const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.1, 16), metal); knob.rotation.z = Math.PI / 2; knob.position.z = 0.01; ota.add(tag(knob, 'focus')); }
-      if (ri.hasAF) { const mot = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.04), red); mot.position.set(0.05, -0.03, 0.01); ota.add(mot); }
-    }
-    // camera body
-    if (cam) {
-      if (cam.type === 'dslr') { const body = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.095, 0.075), black); body.position.set(0, 0.012, -0.0); ota.add(tag(body, 'camera')); const grip = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.09, 0.04), black); grip.position.set(-0.06, 0.008, 0.03); ota.add(grip); const prism = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.03, 0.05), black); prism.position.set(0, 0.07, 0); ota.add(prism); }
-      else { const body = new THREE.Mesh(new THREE.CylinderGeometry(cam.w > 5000 ? 0.045 : 0.04, cam.w > 5000 ? 0.045 : 0.04, 0.07, 32), red); body.rotation.x = Math.PI / 2; body.position.z = -0.06; ota.add(tag(body, 'camera')); const fin = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.03, 24), metal); fin.rotation.x = Math.PI / 2; fin.position.z = -0.11; ota.add(fin); }
-      if (ri.hasWheel) { const wh = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.03, 32), black); wh.rotation.x = Math.PI / 2; wh.position.set(0.03, 0, -0.015); ota.add(wh); }
-    }
-    // guide scope
-    if (ri.hasGuide) { const gs = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.2, 20), black); gs.rotation.x = Math.PI / 2; gs.position.set(0, (rad || 0.04) + 0.06, frontZ * 0.5); ota.add(tag(gs, 'scope')); const gc = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.04, 16), red); gc.rotation.x = Math.PI / 2; gc.position.set(0, (rad || 0.04) + 0.06, frontZ * 0.5 - 0.12); ota.add(gc); }
-    // dew strap, cap, bahtinov mask
-    const dew = new THREE.Mesh(new THREE.CylinderGeometry((rad || 0.04) * 1.04, (rad || 0.04) * 1.04, 0.025, 32, 1, true), new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0x200000 }));
-    dew.rotation.x = Math.PI / 2; dew.position.z = frontZ - 0.03; ota.add(tag(dew, 'dew')); refs.dew = dew;
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry((rad || 0.04) * 1.08, (rad || 0.04) * 1.08, 0.012, 32), new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.7 }));
-    cap.rotation.x = Math.PI / 2; cap.position.z = frontZ + 0.006; ota.add(tag(cap, 'cap')); refs.cap = cap;
-    const fog = new THREE.Mesh(new THREE.CircleGeometry((rad || 0.04) * 0.97, 32), new THREE.MeshBasicMaterial({ color: 0xd8e2ec, transparent: true, opacity: 0, depthWrite: false }));
-    fog.position.z = frontZ + 0.003; ota.add(tag(fog, 'dew')); refs.fog = fog;
-    const bc = document.createElement('canvas'); bc.width = bc.height = 128; const bg = bc.getContext('2d'); bg.fillStyle = '#222'; bg.beginPath(); bg.arc(64, 64, 62, 0, 7); bg.fill(); bg.fillStyle = '#000';
-    for (let i = -60; i < 60; i += 8) { bg.fillRect(4, 64 + i, 56, 4); } bg.save(); bg.translate(96, 64); bg.rotate(0.35); for (let i = -60; i < 60; i += 8) bg.fillRect(-28, i, 56, 4); bg.restore();
-    const bt = new THREE.CanvasTexture(bc);
-    const baht = new THREE.Mesh(new THREE.CircleGeometry((rad || 0.04) * 1.1, 32), new THREE.MeshStandardMaterial({ map: bt, transparent: true, alphaTest: 0.1, side: THREE.DoubleSide })); baht.position.z = frontZ + 0.02; ota.add(tag(baht, 'bahtinov')); refs.baht = baht;
-    // panel
-    const panel = new THREE.Mesh(new THREE.CylinderGeometry((rad || 0.04) * 1.25, (rad || 0.04) * 1.25, 0.02, 32), new THREE.MeshBasicMaterial({ color: 0xf4f6ff, toneMapped: false })); panel.rotation.x = Math.PI / 2; panel.position.z = frontZ + 0.03; ota.add(panel); refs.panel = panel;
-    // status LED
-    const led = new THREE.Mesh(new THREE.SphereGeometry(0.006), new THREE.MeshBasicMaterial({ color: 0xff0000, toneMapped: false })); led.position.set(0.04, 0.03, -0.03); ota.add(led); refs.led = led;
-    this.otaLength = frontZ;
+    R.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+    this.otaLength = o.frontZ;
     this.rig = refs;
   }
 
   updateRig(t) {
     const n = G.s.night; if (!n || !this.rig) return;
     const p = S.pointing(); if (!p) return;
-    const loc = S.locNow(); const mount = GEAR[G.s.rig.mount]; const refs = this.rig;
+    const loc = S.locNow(); const refs = this.rig;
     const dir = altAzToVec(p.alt, p.az);
     this.rigGroup.updateMatrixWorld(true);
-    if (mount.type === 'eq') {
+    let off;
+    if (refs.polar) {
       refs.polar.rotation.z = (n.mount.pa.az / 60) * A.D2R * 6; // exaggerated so you can see the bolts move
       refs.polar.rotation.x = -(90 - Math.abs(loc.lat) - (n.mount.pa.alt / 60) * 6) * A.D2R;
       refs.polar.updateMatrixWorld(true);
@@ -486,21 +453,35 @@ export class World {
       refs.raRot.updateMatrixWorld(true);
       const rq = new THREE.Quaternion(); refs.raRot.getWorldQuaternion(rq);
       const side = v3(1, 0, 0).applyQuaternion(rq).y >= 0 ? 1 : -1; // counterweight hangs down
-      refs.saddle.position.x = side * refs.sadOff;
-      if (refs.shaft) { refs.shaft.position.x = -side * 0.3; refs.cw.position.x = -side * 0.42; }
-    } else if (mount.type === 'altaz') refs.azRot.rotation.y = -p.az * A.D2R + Math.PI;
-    // place the OTA at the saddle and aim it along the true optical axis
+      refs.decSide.scale.x = side; refs.decSide.updateMatrixWorld(true);
+      off = v3(side, 0, 0).applyQuaternion(rq);
+    } else if (refs.azRot) {
+      refs.azRot.rotation.y = -p.az * A.D2R; refs.azRot.updateMatrixWorld(true);
+      const q = new THREE.Quaternion(); refs.azRot.getWorldQuaternion(q); off = v3(1, 0, 0).applyQuaternion(q);
+    } else off = v3(0, 1, 0);
+    // the OTA's -Y faces the mount; its saddle point sits exactly on the mount's saddle
+    off.addScaledVector(dir, -off.dot(dir));
+    if (off.lengthSq() < 1e-6) off.copy(this._lastOff || v3(0, 0, 1)); off.normalize(); this._lastOff = off.clone();
+    const xA = off.clone().cross(dir).normalize(), yA = dir.clone().cross(xA);
+    refs.ota.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xA, yA, dir));
     const sp = new THREE.Vector3(); refs.saddle.getWorldPosition(sp);
-    const local = this.rigGroup.worldToLocal(sp.clone());
-    refs.ota.position.copy(local);
-    const m = new THREE.Matrix4(); const up = Math.abs(dir.y) > 0.98 ? v3(0, 0, -1) : v3(0, 1, 0);
-    m.lookAt(v3(0, 0, 0), dir.clone().negate(), up); // lookAt makes -Z face the target; we built along +Z
-    refs.ota.quaternion.setFromRotationMatrix(m);
+    refs.ota.position.copy(this.rigGroup.worldToLocal(sp)).sub(refs.mountPoint.clone().applyQuaternion(refs.ota.quaternion));
     refs.cap.visible = n.capOn; refs.baht.visible = n.bahtinov; refs.panel.visible = n.panelOn;
-    refs.dew.material.emissive.setHex(n.dewHeater ? 0x400000 : 0x000000);
+    refs.dew.material.emissive.setHex(n.dewHeater ? 0x3a0800 : 0x000000);
     const fogA = Math.min(0.85, n.dew * 0.9 + (n.smudge || 0) * 0.25);
     refs.fog.visible = !n.capOn && fogA > 0.02; refs.fog.material.opacity = fogA;
     refs.led.material.color.setHex(S.T.exposure ? (Math.floor(t * 2) % 2 ? 0xff2020 : 0x400000) : 0x00ff40);
+    // USB cable from the camera down to the mount, re-hung when the scope moves
+    if (refs.camBack && refs.apex) {
+      const a = refs.camBack.clone().applyQuaternion(refs.ota.quaternion).add(refs.ota.position);
+      if (!this.usb || this.usb.a.distanceToSquared(a) > 1e-4) {
+        if (this.usb) { this.rigGroup.remove(this.usb.mesh); this.usb.mesh.geometry.dispose(); }
+        const b = refs.apex; const drop = Math.max(0.12, (a.y - b.y) * 0.4 + 0.12);
+        const c = new THREE.CatmullRomCurve3([a, a.clone().add(v3(0, -0.06, 0)), a.clone().lerp(b, 0.5).add(v3(0.05, -drop, 0.05)), b.clone().add(v3(0.03, 0.02, 0.03)), b]);
+        const mesh = new THREE.Mesh(new THREE.TubeGeometry(c, 32, 0.003, 5), MD.std(0x0e0e0f, 0.7, 0.05)); mesh.castShadow = true;
+        this.rigGroup.add(mesh); this.usb = { a, mesh };
+      }
+    }
   }
 
   // ------------------------------------------------------------ other players (multiplayer)
@@ -514,25 +495,35 @@ export class World {
       if (!a) { a = this.makeAvatar(p); this.avatars.set(p.id, a); this.scene.add(a.g); }
       a.target = p.pose; a.name = p.name;
     }
-    for (const [id, a] of this.avatars) if (!seen.has(id)) { this.scene.remove(a.g); this.avatars.delete(id); }
+    for (const [id, a] of this.avatars) if (!seen.has(id)) { this.scene.remove(a.g); this.scene.remove(a.laser); this.avatars.delete(id); }
   }
   makeAvatar(p) {
     const g = new THREE.Group();
     const col = new THREE.Color(p.color || '#8fd3ff');
-    const jacket = new THREE.MeshLambertMaterial({ color: col.clone().multiplyScalar(0.55) });
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.23, 1.05, 14), jacket); body.position.y = 0.95; body.castShadow = true; g.add(body);
-    for (const x of [-0.09, 0.09]) { const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.45, 8), new THREE.MeshLambertMaterial({ color: 0x22252b })); leg.position.set(x, 0.22, 0); g.add(leg); }
-    const headPivot = new THREE.Group(); headPivot.position.y = 1.58; g.add(headPivot);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 12), new THREE.MeshLambertMaterial({ color: 0xc8a48a })); headPivot.add(head);
-    const beanie = new THREE.Mesh(new THREE.SphereGeometry(0.135, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: col })); beanie.position.y = 0.02; headPivot.add(beanie);
-    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.025), new THREE.MeshBasicMaterial({ color: 0xff2010, toneMapped: false })); lamp.position.set(0, 0.06, -0.13); headPivot.add(lamp);
+    const jacket = new THREE.MeshLambertMaterial({ color: col.clone().multiplyScalar(0.55) }), pants = new THREE.MeshLambertMaterial({ color: 0x22252b }), boot = new THREE.MeshLambertMaterial({ color: 0x15120f }), skin = new THREE.MeshLambertMaterial({ color: 0xc8a48a });
+    const cap = (r, len, m, x, y, z) => { const c = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, 10), m); c.position.set(x, y, z); c.castShadow = true; return c; };
+    for (const x of [-0.1, 0.1]) { g.add(cap(0.075, 0.62, pants, x, 0.46, 0)); g.add(MD.rbox(0.12, 0.09, 0.24, 0.03, boot, x, 0.045, -0.03)); }
+    const torso = cap(0.2, 0.42, jacket, 0, 1.13, 0); torso.scale.z = 0.72; g.add(torso);
+    const zip = MD.box(0.012, 0.5, 0.01, new THREE.MeshLambertMaterial({ color: col }), 0, 1.15, -0.146); g.add(zip);
+    const armL = new THREE.Group(); armL.position.set(-0.25, 1.4, 0); armL.rotation.z = -0.12; armL.add(cap(0.06, 0.48, jacket, 0, -0.3, 0)); armL.add(cap(0.045, 0.04, skin, 0, -0.6, 0)); g.add(armL);
+    const armR = new THREE.Group(); armR.position.set(0.25, 1.4, 0); armR.rotation.z = 0.12; armR.add(cap(0.06, 0.48, jacket, 0, -0.3, 0)); armR.add(cap(0.045, 0.04, skin, 0, -0.6, 0)); g.add(armR);
+    const hand = new THREE.Object3D(); hand.position.set(0, -0.66, 0); armR.add(hand);
+    g.add(cap(0.06, 0.05, skin, 0, 1.47, 0));
+    const headPivot = new THREE.Group(); headPivot.position.y = 1.62; g.add(headPivot);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.115, 18, 14), skin); head.scale.set(0.95, 1.08, 1); headPivot.add(head);
+    const beanie = new THREE.Mesh(new THREE.SphereGeometry(0.122, 18, 9, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: col })); beanie.position.y = 0.025; headPivot.add(beanie);
+    const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.118, 0.022, 8, 24), new THREE.MeshLambertMaterial({ color: col.clone().multiplyScalar(0.8) })); cuff.rotation.x = Math.PI / 2; cuff.position.y = 0.03; headPivot.add(cuff);
+    const pom = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), new THREE.MeshLambertMaterial({ color: col })); pom.position.y = 0.15; headPivot.add(pom);
+    const strap = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.008, 6, 24), new THREE.MeshLambertMaterial({ color: 0x111111 })); strap.rotation.x = Math.PI / 2; strap.position.y = 0.055; headPivot.add(strap);
+    headPivot.add(MD.rbox(0.05, 0.03, 0.025, 0.006, new THREE.MeshLambertMaterial({ color: 0x1a1a1a }), 0, 0.055, -0.125));
+    const lamp = new THREE.Mesh(new THREE.CircleGeometry(0.011, 12), new THREE.MeshBasicMaterial({ color: 0xff2010, toneMapped: false })); lamp.position.set(0, 0.055, -0.139); lamp.rotation.y = Math.PI; headPivot.add(lamp);
     const beam = new THREE.SpotLight(0xff1a00, 0, 10, 0.5, 0.6, 1.5); beam.position.copy(lamp.position); headPivot.add(beam); beam.target.position.set(0, -0.2, -2); headPivot.add(beam.target);
     // name tag
     const c = document.createElement('canvas'); c.width = 256; c.height = 48; const x = c.getContext('2d');
     x.font = '500 26px "IBM Plex Sans Condensed", system-ui'; x.textAlign = 'center'; x.fillStyle = 'rgba(0,0,0,.55)'; const w = Math.min(250, x.measureText(p.name).width + 24); x.fillRect(128 - w / 2, 4, w, 38);
     x.fillStyle = p.color || '#8fd3ff'; x.fillText(p.name.toUpperCase(), 128, 33);
     const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true })); tag.scale.set(0.9, 0.17, 1); tag.position.y = 2.0; g.add(tag);
-    return { g, headPivot, lamp, beam, cur: null, target: null };
+    return { g, headPivot, lamp, beam, armR, hand, laser: this.makeLaser(false), cur: null, target: null };
   }
   updateAvatars(dt) {
     if (!this.avatars) return;
@@ -546,9 +537,82 @@ export class World {
       a.cur.yaw += dy * k; a.cur.pitch += (t.pitch - a.cur.pitch) * k;
       a.g.position.copy(a.cur.pos); a.g.rotation.y = a.cur.yaw;
       a.headPivot.rotation.x = THREE.MathUtils.clamp(a.cur.pitch, -0.9, 0.9);
-      a.g.scale.y = t.at === 'laptop' ? 0.82 : 1; // sitting at the table
+      a.g.scale.y = t.at === 'laptop' || t.at === 'chair' ? 0.82 : 1; // sitting
+      a.laser.visible = !!t.laser;
+      // raise the right arm along the gaze while pointing the laser
+      const armT = t.laser ? Math.PI / 2 + THREE.MathUtils.clamp(a.cur.pitch, -0.6, 1.4) : 0; a.armR.rotation.x += (armT - a.armR.rotation.x) * k; a.armR.rotation.z = t.laser ? 0.02 : 0.12;
+      if (t.laser) { const cp = Math.cos(a.cur.pitch); const d = v3(-Math.sin(a.cur.yaw) * cp, Math.sin(a.cur.pitch), -Math.cos(a.cur.yaw) * cp); a.g.updateMatrixWorld(true); this.aimLaser(a.laser, a.hand.getWorldPosition(v3(0, 0, 0)), d); }
       a.lamp.visible = !!t.lamp; a.beam.intensity = t.lamp ? 2.5 : 0;
     }
+  }
+
+  // ------------------------------------------------------------ sky overlays: constellations & names, deep-sky glows
+  buildOverlays() {
+    if (this.constGroup || !cat.loaded) return;
+    const g = new THREE.Group(); g.visible = false; this.celestial.add(g); this.constGroup = g; this.constFade = 0;
+    const pos = [];
+    for (const ls of cat.lines) for (let i = 0; i < ls.length - 1; i++) { const a = eqVec(ls[i][0], ls[i][1]).multiplyScalar(SKY_R - 15), b = eqVec(ls[i + 1][0], ls[i + 1][1]).multiplyScalar(SKY_R - 15); pos.push(a.x, a.y, a.z, b.x, b.y, b.z); }
+    const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    this.constMat = new THREE.LineBasicMaterial({ color: 0x5a8ad0, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+    const lines = new THREE.LineSegments(lg, this.constMat); lines.frustumCulled = false; lines.renderOrder = -6; g.add(lines);
+    this.labelMats = [];
+    const label = (text, ra, dec, color, size, font) => {
+      const c = document.createElement('canvas'); c.width = 512; c.height = 64; const x = c.getContext('2d');
+      x.font = font; x.fillStyle = color; x.textAlign = 'center'; x.textBaseline = 'middle'; x.shadowColor = 'rgba(0,0,0,.9)'; x.shadowBlur = 6; x.fillText(text, 256, 32);
+      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+      const m = new THREE.SpriteMaterial({ map: t, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
+      const sp = new THREE.Sprite(m); sp.position.copy(eqVec(ra, dec).multiplyScalar(SKY_R - 20)); sp.scale.set(size * 8, size, 1); sp.renderOrder = -5; g.add(sp); this.labelMats.push(m);
+    };
+    for (const cn of cat.constNames) label(cn.name.toUpperCase().split('').join(' '), cn.ra, cn.dec, '#8fb3e6', 34, '500 30px "IBM Plex Sans Condensed", system-ui');
+    for (const st of cat.stars) { if (st.mag > 1.7) break; if (st.name) label(st.name, st.ra, st.dec - 1.6, '#ead9ad', 24, '500 30px "IBM Plex Sans", system-ui'); }
+    // deep-sky objects as faint glows whose visibility follows surface brightness (M31, M42, the Magellanic Clouds…)
+    const ds = cat.dsos.filter((d) => Number.isFinite(+d.mag) && +d.mag < 9.5 && +d.size > 0 && !/^(planet|moon|star|milkyway|pos|dark|dn)$/.test(d.type));
+    const P = new Float32Array(ds.length * 3), SZ = new Float32Array(ds.length), MG = new Float32Array(ds.length), C = new Float32Array(ds.length * 3);
+    ds.forEach((d, i) => {
+      const v = eqVec(d.ra, d.dec).multiplyScalar(SKY_R - 12); P.set([v.x, v.y, v.z], i * 3); SZ[i] = Math.min(12, +d.size / 60); MG[i] = +d.mag + (/^(oc|cluster)$/.test(d.type) ? 1.5 : 0);
+      C.set(/(en|bn|rn|nebula|snr|sn|pn|planetary)$/.test(d.type) ? [0.78, 1.0, 0.88] : /^(gc|oc|cluster)$/.test(d.type) ? [1.0, 0.96, 0.88] : [0.88, 0.9, 1.0], i * 3);
+    });
+    const dg = new THREE.BufferGeometry(); dg.setAttribute('position', new THREE.BufferAttribute(P, 3)); dg.setAttribute('size', new THREE.BufferAttribute(SZ, 1)); dg.setAttribute('mag', new THREE.BufferAttribute(MG, 1)); dg.setAttribute('color', new THREE.BufferAttribute(C, 3));
+    this.dsoMat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: { limMag: { value: 5 }, ppd: { value: 10 } },
+      vertexShader: `attribute float size; attribute float mag; attribute vec3 color; uniform float limMag, ppd; varying vec3 vColor; varying float vI;
+        void main(){ vec4 wp = modelMatrix*vec4(position,1.0); float alt = normalize(wp.xyz).y;
+          float px = max(3.0, size * ppd); float b = pow(10.0, -0.4*(mag + 0.25/max(alt,0.05) - limMag));
+          vI = max(0.0, min(0.4, 0.05 * b * 8.0 / max(8.0, px)) - 0.02) * smoothstep(0.0, 0.08, alt);
+          vColor = color; gl_PointSize = min(px, 480.0); gl_Position = projectionMatrix*viewMatrix*wp; }`,
+      fragmentShader: `varying vec3 vColor; varying float vI; void main(){ vec2 c = gl_PointCoord - 0.5; float r2 = dot(c,c)*4.0; float a = exp(-r2*3.2) * vI; if (a < 0.002) discard; gl_FragColor = vec4(vColor * a, 1.0); }`,
+    });
+    this.dso = new THREE.Points(dg, this.dsoMat); this.dso.frustumCulled = false; this.dso.renderOrder = -7; this.celestial.add(this.dso);
+  }
+  setConstellations(on) { this.showConst = on; this.emit('const', on); }
+  setBino(on) {
+    this.bino = on; if (on && this.seated) { /* fine — stargazing from the chair */ }
+    if (on && this.grab) this.setGrab(false);
+    this.emit('bino', on ? this.binoFov : 0);
+  }
+  // green laser pointer: a thin bright core near you and a 1-px line to the sky
+  makeLaser(withCore) {
+    const g = new THREE.Group(); g.visible = false;
+    const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3)); lg.setAttribute('color', new THREE.Float32BufferAttribute([0.35, 1.0, 0.45, 0.05, 0.28, 0.1], 3));
+    const line = new THREE.Line(lg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })); line.frustumCulled = false; g.add(line);
+    if (withCore) { const cg = new THREE.CylinderGeometry(0.0016, 0.0016, 1, 6, 1, true); cg.translate(0, 0.5, 0); const core = new THREE.Mesh(cg, new THREE.MeshBasicMaterial({ color: 0x40ff70, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })); core.frustumCulled = false; g.add(core); g.userData.core = core; }
+    g.userData.line = line; this.scene.add(g); return g;
+  }
+  aimLaser(L, from, dir) {
+    const p = L.userData.line.geometry.attributes.position; const to = from.clone().addScaledVector(dir, SKY_R * 0.92);
+    p.setXYZ(0, from.x, from.y, from.z); p.setXYZ(1, to.x, to.y, to.z); p.needsUpdate = true;
+    const core = L.userData.core; if (core) { core.position.copy(from); core.quaternion.setFromUnitVectors(v3(0, 1, 0), dir); core.scale.set(1, 80, 1); }
+  }
+  // the camp chair: sit back and look up
+  toggleSeat() {
+    if (this.seated) { this.seated = null; this.player.pos.copy(this._standPos || v3(0.6, 1.65, 0.6)); this.emit('seat', false); return; }
+    const seat = this.chair.localToWorld(v3(0, 0.5, 0.02));
+    this._standPos = this.player.pos.clone();
+    const yaw = this.table.rotation.y + this.chair.rotation.y + Math.PI;
+    this.seated = { pos: v3(seat.x, 1.08, seat.z) };
+    this.player.yaw = wrapPi(yaw); this.player.pitch = 0.6; this.setGrab(false);
+    this.emit('seat', true);
   }
 
   // ------------------------------------------------------------ laptop screen texture
@@ -604,13 +668,17 @@ export class World {
       if (e.code === 'KeyE') this.interact();
       if (e.code === 'KeyF') { this.flashlight = !this.flashlight; }
       if (e.code === 'KeyR') this.emit('panel');
+      if (e.code === 'KeyB' && !e.repeat) this.setBino(!this.bino);
+      if (e.code === 'KeyC' && !e.repeat && !e.metaKey && !e.ctrlKey) this.setConstellations(!this.showConst);
+      if (e.code === 'KeyL') this.laserOn = true;
       if (e.code === 'Escape' && this.grab) this.setGrab(false);
     });
-    window.addEventListener('keyup', (e) => { this.keys[e.code] = false; });
-    window.addEventListener('blur', () => { this.keys = {}; });
+    window.addEventListener('keyup', (e) => { this.keys[e.code] = false; if (e.code === 'KeyL') this.laserOn = false; });
+    window.addEventListener('blur', () => { this.keys = {}; this.laserOn = false; });
+    el.addEventListener('wheel', (e) => { if (!this.running || !this.bino) return; e.preventDefault(); this.binoFov = THREE.MathUtils.clamp(this.binoFov * Math.exp(e.deltaY * 0.0015), 2.5, 14); this.emit('bino', this.binoFov); }, { passive: false });
   }
   look(dx, dy) {
-    const k = 0.0025 * (window.__flSens || 1);
+    const k = 0.0025 * (window.__flSens || 1) * Math.max(0.05, this.camera.fov / 70);
     if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
     this.player.yaw = wrapPi(this.player.yaw - dx * k); this.player.pitch = THREE.MathUtils.clamp(this.player.pitch - dy * k, -1.45, 1.52);
   }
@@ -620,7 +688,9 @@ export class World {
   }
   interact() {
     if (this.grab) { this.setGrab(false); return; }
-    const h = this.hover; if (!h) return;
+    const h = this.hover;
+    if (this.seated && (!h || h === 'chair')) { this.toggleSeat(); return; }
+    if (!h) return;
     this.emit('action', h);
   }
   pick() {
@@ -630,7 +700,7 @@ export class World {
       const r = this.renderer.domElement.getBoundingClientRect();
       ray.setFromCamera(new THREE.Vector2(((this.mouse.x - r.left) / r.width) * 2 - 1, -((this.mouse.y - r.top) / r.height) * 2 + 1), this.camera);
     } else ray.setFromCamera(new THREE.Vector2(0, 0), this.camera);
-    const objs = [this.rigGroup, this.table];
+    const objs = [this.rigGroup, this.table]; ray.far = this.seated ? 6 : 4;
     const hits = ray.intersectObjects(objs, true).filter((h) => h.object.visible);
     for (const hh of hits) { let o = hh.object; while (o && !o.userData.action) o = o.parent; if (o) return o.userData.action; }
     return null;
@@ -644,10 +714,12 @@ export class World {
     const dt = Math.min(0.05, this.clock.getDelta()); const t = this.clock.elapsedTime;
     const n = G.s.night; if (!n) return;
     if (!this.stars && cat.loaded) this.buildStars();
+    if (!this.constGroup && cat.loaded) this.buildOverlays();
     if (this.locId !== n.loc) { this.buildSite(n.loc); }
     if (this.rigKey !== JSON.stringify(G.s.rig)) this.buildRig();
     // movement
     const P = this.player; const sp = (this.keys.ShiftLeft || this.keys.ShiftRight ? 3.2 : 1.4) * dt;
+    const K = this.keys; if (this.seated && (K.KeyW || K.KeyS || K.KeyA || K.KeyD || K.ArrowUp || K.ArrowDown || K.ArrowLeft || K.ArrowRight)) this.toggleSeat();
     const fwd = v3(-Math.sin(P.yaw), 0, -Math.cos(P.yaw)), right = v3(Math.cos(P.yaw), 0, -Math.sin(P.yaw));
     if (this.keys.KeyW || this.keys.ArrowUp) P.pos.addScaledVector(fwd, sp);
     if (this.keys.KeyS || this.keys.ArrowDown) P.pos.addScaledVector(fwd, -sp);
@@ -657,7 +729,11 @@ export class World {
     // footsteps
     { const moved = this._lastPos ? Math.hypot(P.pos.x - this._lastPos.x, P.pos.z - this._lastPos.z) : 0; this._lastPos = P.pos.clone(); this._stride = (this._stride || 0) + moved;
       if (this._stride > 0.72) { this._stride = 0; window.dispatchEvent(new CustomEvent('fl-sfx', { detail: { name: 'step', surface: S.locNow()?.biome } })); } }
-    P.pos.y = 1.65 + Math.sin(t * 1.3) * 0.003;
+    if (this.seated) P.pos.copy(this.seated.pos); else P.pos.y = 1.65 + Math.sin(t * 1.3) * 0.003;
+    // binoculars zoom the view; the FOV eases in and out
+    const fovT = this.bino ? this.binoFov : 70;
+    if (Math.abs(this.camera.fov - fovT) > 0.01) { this.camera.fov += (fovT - this.camera.fov) * Math.min(1, dt * 9); this.camera.updateProjectionMatrix(); }
+    const zoomK = THREE.MathUtils.clamp((70 - this.camera.fov) / (70 - 14), 0, 1);
     this.camera.position.copy(P.pos);
     this.camera.rotation.set(P.pitch, P.yaw, 0, 'YXZ');
     this.camera.updateMatrixWorld();
@@ -699,8 +775,16 @@ export class World {
       g.attributes.position.needsUpdate = g.attributes.color.needsUpdate = g.attributes.mag.needsUpdate = true;
     }
     this.updateMeteors(lim);
-    if (this.starMat) { this.starMat.uniforms.limMag.value = lim; this.starMat.uniforms.time.value = t; this.starMat.uniforms.seeing.value = env.seeing; }
-    this.mwMat.uniforms.strength.value = THREE.MathUtils.clamp((lim - 4.2) / 2.2, 0, 1) * 1.6 * (1 - env.clouds);
+    // 50 mm binoculars gather ~4 magnitudes more than a dark-adapted eye
+    const limEff = lim + 4.2 * zoomK * (1 - env.clouds * 0.6);
+    if (this.starMat) { this.starMat.uniforms.limMag.value = limEff; this.starMat.uniforms.time.value = t; this.starMat.uniforms.seeing.value = env.seeing * (1 - zoomK * 0.8); }
+    this.mwMat.uniforms.strength.value = THREE.MathUtils.clamp((lim - 4.2) / 2.2, 0, 1) * 1.6 * (1 - env.clouds) * (1 - zoomK * 0.45);
+    if (this.dsoMat) { this.dsoMat.uniforms.limMag.value = limEff - env.clouds * 3; this.dsoMat.uniforms.ppd.value = this.renderer.domElement.height / this.camera.fov; }
+    if (this.constGroup) {
+      this.constFade += ((this.showConst ? 1 : 0) - this.constFade) * Math.min(1, dt * 6);
+      this.constGroup.visible = this.constFade > 0.01; this.constMat.opacity = this.constFade * 0.55;
+      for (const m of this.labelMats) m.opacity = this.constFade * 0.85;
+    }
     // moon & sun
     const mp = moonV.clone().multiplyScalar(820); this.moon.position.copy(this.camera.position).add(mp); this.moon.lookAt(this.camera.position); this.moon.scale.setScalar(820 * 0.0092 * 1.8);
     if (this._moonPhase === undefined || Math.abs(this._moonPhase - env.moonPhase) > 0.5) { this._moonPhase = env.moonPhase; this.drawMoon(env); }
@@ -709,6 +793,7 @@ export class World {
     this.moonLight.position.copy(moonV.clone().multiplyScalar(40)); this.moonLight.intensity = moonUp * env.moonIllum * 1.4 * (1 - env.clouds * 0.8);
     const tw = THREE.MathUtils.clamp((env.sunAlt + 12) / 18, 0, 1);
     this.hemi.intensity = 1.1 + tw * 2 + moonUp * env.moonIllum * 0.8;
+    this.scene.environmentIntensity = 0.03 + tw * 0.55 + moonUp * env.moonIllum * 0.08;
     this.lpLight.intensity = lpLevel * 0.9 * (1 + env.clouds);
     this.renderer.toneMappingExposure = 1.0 + (1 - tw) * 1.6;
     // clouds
@@ -722,6 +807,12 @@ export class World {
       const dirv = this.camera.getWorldDirection(v3(0, 0, 0)); const aa = vecToAltAz(dirv);
       if (!this._lastAim || t - this._lastAim > 0.08) { this._lastAim = t; S.aimAltAz(aa.alt, aa.az); }
     }
+    // laser pointer
+    if (this.laserOn || this.laser) {
+      this.laser = this.laser || this.makeLaser(true); this.laser.visible = this.laserOn;
+      if (this.laserOn) { const fwd = this.camera.getWorldDirection(v3(0, 0, 0)); const right = v3(1, 0, 0).applyQuaternion(this.camera.quaternion); const from = this.camera.position.clone().addScaledVector(right, 0.14).add(v3(0, -0.16, 0)).addScaledVector(fwd, 0.3); this.aimLaser(this.laser, from, fwd); }
+    }
+    if (this.grass) this.grass.time.value = t;
     this.updateRig(t);
     this.updateAvatars(dt);
     if (!this._lastScreen || t - this._lastScreen > 0.5) { this._lastScreen = t; this.drawScreen(); }

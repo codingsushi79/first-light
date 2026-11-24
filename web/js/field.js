@@ -34,7 +34,7 @@ export function initField(container, cb) {
 export function getPose() {
   if (!world) return null;
   const P = world.player;
-  return { pos: [+P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2)], yaw: +P.yaw.toFixed(3), pitch: +P.pitch.toFixed(3), at: visible ? 'outside' : 'laptop', lamp: !!world.flashlight };
+  return { pos: [+P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2)], yaw: +P.yaw.toFixed(3), pitch: +P.pitch.toFixed(3), at: visible ? (world.seated ? 'chair' : 'outside') : 'laptop', lamp: !!world.flashlight, laser: visible && !!world.laserOn };
 }
 function ensureWorld() {
   if (world) return world;
@@ -44,6 +44,9 @@ function ensureWorld() {
   world.on('hover', (a) => hud.setPrompt(hoverText(a)));
   world.on('action', (a) => doAction(a));
   world.on('panel', () => togglePanel());
+  world.on('bino', (fov) => hud.setBino(fov));
+  world.on('const', (on) => hud.flash(on ? 'CONSTELLATIONS ON' : 'CONSTELLATIONS OFF'));
+  world.on('seat', (on) => { hud.setPrompt(hoverText(world.hover)); if (on) hud.flash('RELAXING IN THE CHAIR · WASD OR E TO STAND'); });
   world.on('grab', (g) => { hud.setPrompt(g ? 'AIMING BY HAND — LOOK WHERE THE RIG SHOULD POINT · E / CLICK TO LOCK' : ''); hud.setGrab(g); root.classList.toggle('grabbing', g); });
   on('mpplayers', (pl) => world.setRemotePlayers(Object.values(pl).filter((p) => p.id !== MP.myId)));
   return world;
@@ -59,6 +62,8 @@ function hoverText(a) {
     case 'focus': return 'E  FOCUS BY HAND';
     case 'polar': return GEAR[G.s.rig.mount].polarScope ? 'E  POLAR SCOPE / ALIGNMENT BOLTS' : 'E  POLAR ALIGNMENT BOLTS';
     case 'camera': return 'E  CAMERA (ROTATE)';
+    case 'chair': return world && world.seated ? 'E  STAND UP' : 'E  SIT IN THE CAMP CHAIR';
+    case 'power': return `POWER STATION · ${Math.round(n.battery)}% · E  DETAILS`;
     default: return manualMount() ? (GEAR[G.s.rig.mount].type === 'fixed' ? 'E  LOOSEN THE BALL HEAD AND AIM' : 'E  UNLOCK THE CLUTCH AND AIM BY HAND') : 'E  HAND CONTROLLER';
   }
 }
@@ -66,6 +71,8 @@ function doAction(a) {
   const n = G.s.night; if (!n) return;
   const ri = rigInfo(G.s.rig);
   if (a === 'laptop') return sitDown();
+  if (a === 'chair') return world.toggleSeat();
+  if (a === 'power') { toast(`Power station: ${Math.round(n.battery)}% — runs the mount, camera cooler, dew heaters and laptop through the night.`, 'info', 4000); return; }
   if (a === 'cap') { window.dispatchEvent(new CustomEvent('fl-sfx', { detail: { name: 'cap' } })); S.setProp('capOn', false); toast('Lens cap removed. (Keep it handy for dark frames!)', 'info', 2500); save(); return; }
   if (a === 'bahtinov') { S.setProp('bahtinov', false); toast('Bahtinov mask removed.', 'info', 2000); return; }
   if (a === 'dew') { if (n.dew > 0.05 || (n.smudge || 0) > 0.05 || !ri.hasDew) return openPanel('optics'); if (ri.hasDew) { S.setProp('dewHeater', !n.dewHeater); toast(`Dew heater ${n.dewHeater ? 'on' : 'off'}.`, 'info', 1800); } return; }
@@ -92,7 +99,7 @@ const wrapPi = (a) => (Number.isFinite(a) ? ((a + Math.PI) % (2 * Math.PI) + 2 *
 let sitting = false;
 function sitDown() {
   if (sitting) return; sitting = true;
-  world.setGrab(false);
+  world.setGrab(false); if (world.seated) world.toggleSeat(); if (world.bino) world.setBino(false);
   if (document.pointerLockElement) document.exitPointerLock();
   // walk/turn to the laptop, then look down at the screen
   const P = world.player; const scr = new world.camera.position.constructor();

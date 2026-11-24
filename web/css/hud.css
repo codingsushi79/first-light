@@ -128,11 +128,22 @@ body.hud-off .hud > :not(.hud-xhair):not(.hud-prompt):not(.hud-chat) { display: 
 .gauge-fill { display: block; height: 100%; background: var(--av-text); transition: width .2s linear; }
 .gauge-fill.exp { background: var(--av-accent); } .gauge-fill.ok { background: var(--av-ok); } .gauge-fill.bad { background: var(--av-bad); }
 .gauge-value { text-align: right; font: .9em var(--av-mono); }
-.hud-warn { position: absolute; top: calc(110px * var(--hud-scale)); left: 50%; transform: translateX(-50%); color: var(--av-warn); font: 500 .95em var(--av-cond); letter-spacing: .12em; text-transform: uppercase; text-shadow: 0 0 6px rgb(0 0 0 / .9); white-space: nowrap; }
+.hud-warn { position: absolute; top: 138px; left: 50%; transform: translateX(-50%); color: var(--av-warn); font: 500 .95em var(--av-cond); letter-spacing: .12em; text-transform: uppercase; text-shadow: 0 0 6px rgb(0 0 0 / .9); white-space: nowrap; }
 .hud-xhair { position: absolute; left: 50%; top: 50%; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; border: 1px solid rgb(255 255 255 / .7); }
 .hud.grabbing .hud-xhair { width: 16px; height: 16px; margin: -8px 0 0 -8px; border-color: var(--av-warn); }
 .hud-prompt { position: absolute; left: 50%; top: calc(50% + 20px); transform: translateX(-50%); background: var(--av-panel); border: 1px solid var(--av-rule); padding: 5px 12px; font: 500 .85em var(--av-cond); letter-spacing: .12em; white-space: nowrap; }
-.hud-hint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); color: var(--av-faint); font: 500 .74em var(--av-cond); letter-spacing: .1em; white-space: nowrap; }
+.hud-hint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 2 * (300px * var(--hud-scale)) - 60px); text-align: center; line-height: 1.6; color: var(--av-faint); font: 500 .74em var(--av-cond); letter-spacing: .1em; }
+/* binoculars: two overlapping eyepiece circles, everything else black */
+.hud-bino { position: absolute; inset: 0; display: none; background: #000;
+  -webkit-mask-image: radial-gradient(circle at calc(50% - 15vmin) 50%, transparent 37vmin, #000 39vmin), radial-gradient(circle at calc(50% + 15vmin) 50%, transparent 37vmin, #000 39vmin);
+  mask-image: radial-gradient(circle at calc(50% - 15vmin) 50%, transparent 37vmin, #000 39vmin), radial-gradient(circle at calc(50% + 15vmin) 50%, transparent 37vmin, #000 39vmin);
+  -webkit-mask-composite: source-in; mask-composite: intersect; }
+.hud.bino-on .hud-bino { display: block; }
+.hud.bino-on .hud-rig, .hud.bino-on .hud-sess, .hud.bino-on .hud-xhair, .hud.bino-on .hud-markers .sky-mk.planet { display: none; }
+.hud-bino-read { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); color: var(--av-muted); font-size: 10.5px; letter-spacing: .14em; white-space: nowrap; }
+.hud-flash { position: absolute; left: 50%; top: 38%; transform: translateX(-50%); color: var(--av-text); font: 600 .95em var(--av-cond); letter-spacing: .2em; text-shadow: 0 0 8px rgb(0 0 0 / .9); opacity: 0; white-space: nowrap; }
+.hud-flash.show { animation: hudflash 2.2s ease-out; }
+@keyframes hudflash { 0% { opacity: 0; transform: translate(-50%, 6px); } 12% { opacity: 1; transform: translate(-50%, 0); } 70% { opacity: 1; } 100% { opacity: 0; } }
 .hud-chat { position: absolute; left: 14px; bottom: calc(330px * var(--hud-scale)); width: calc(360px * var(--hud-scale)); pointer-events: none; }
 .chat-log { display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; }
 .chat-line { font-size: .9em; text-shadow: 0 1px 3px #000; background: rgb(0 0 0 / .35); padding: 2px 6px; width: fit-content; max-width: 100%; }
@@ -172,7 +183,7 @@ body.hud-off .hud > :not(.hud-xhair):not(.hud-prompt):not(.hud-chat) { display: 
 @keyframes tutpulse { 0%, 100% { transform: translateY(0); filter: drop-shadow(0 0 0 rgba(143,211,255,0)); } 50% { transform: translateY(-8px); filter: drop-shadow(0 0 10px rgba(143,211,255,.9)); } }
 
 /* compass tape + sky markers */
-.hud-compass { position: absolute; top: 92px; left: 50%; width: 420px; margin-left: -210px; height: 30px; overflow: hidden; pointer-events: none;
+.hud-compass { position: absolute; top: 92px; left: 50%; width: 420px; margin-left: -210px; height: 36px; overflow: hidden; pointer-events: none;
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent); mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent); }
 .compass-tape { position: absolute; left: 210px; top: 0; height: 18px; will-change: transform; }
 .compass-tape .ct { position: absolute; top: 0; width: 1px; height: 5px; background: rgb(255 255 255 / .35); font: 500 10px/1 var(--av-cond); letter-spacing: .08em; color: var(--av-muted); }

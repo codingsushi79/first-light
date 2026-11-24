@@ -138,7 +138,7 @@ export function settingsPanel(onChange) {
     sl('Master volume', 'volMaster', 0, 1, 0.05, (v) => Math.round(v * 100) + '%'),
     sl('Ambience (wind, crickets, traffic)', 'volAmb', 0, 1, 0.05, (v) => Math.round(v * 100) + '%'),
     sl('Effects (shutter, motors, UI)', 'volSfx', 0, 1, 0.05, (v) => Math.round(v * 100) + '%'),
-    h('table', { class: 'keys' }, ...[['Click / drag', 'Look around (Esc frees the mouse)'], ['W A S D', 'Walk (Shift to hurry)'], ['E', 'Interact'], ['R', 'Rig controls'], ['F', 'Red headlamp'], [', .', 'Time warp down / up'], ['Tab', 'Laptop ↔ outside'], ['Enter', 'Chat (multiplayer)'], ['F2', 'Hide HUD'], ['Esc', 'Pause menu']].map(([k, v]) => h('tr', {}, h('td', { class: 'key' }, k), h('td', {}, v)))));
+    h('table', { class: 'keys' }, ...[['Click / drag', 'Look around (Esc frees the mouse)'], ['W A S D', 'Walk (Shift to hurry)'], ['E', 'Interact'], ['R', 'Rig controls'], ['F', 'Red headlamp'], ['B', 'Binoculars (scroll to zoom)'], ['C', 'Constellation lines & star names'], ['L (hold)', 'Green laser pointer'], [', .', 'Time warp down / up'], ['Tab', 'Laptop ↔ outside'], ['Enter', 'Chat (multiplayer)'], ['F2', 'Hide HUD'], ['Esc', 'Pause menu']].map(([k, v]) => h('tr', {}, h('td', { class: 'key' }, k), h('td', {}, v)))));
 }
 function creditsPanel() {
   const c = (what, who) => h('div', {}, h('div', { class: 'credit-what' }, what), h('div', { class: 'credit-who' }, who));

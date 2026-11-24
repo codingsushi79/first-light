@@ -306,6 +306,6 @@ window.addEventListener('beforeunload', () => save(true));
 armAudio();
 window.addEventListener('fl-prefs', () => applyVolumes());
 setBodyLookup((name) => (G.s && G.s.location ? S.bodyInfo(name) : null));
-window.__dbg = { S, G, RT, A, MP, IM, openApp };
+window.__dbg = { S, G, RT, A, MP, IM, LOC, openApp, showField, hideField };
 main().catch((e) => { console.error(e); say('Failed to start: ' + e.message); });
 void emit;
