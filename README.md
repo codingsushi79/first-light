@@ -67,6 +67,19 @@ millisecond frames). DeepStack → *Planetary videos* keeps the sharpest frames 
 PixelLab's **wavelets** bring the detail out. Low planets suffer atmospheric dispersion — use an ADC
 or *RGB align*.
 
+## New: the observing field
+- **Real-looking gear in 3D.** Every mount family is modelled: ball heads, star trackers on wedges, alt-az
+  mounts, German equatorials with counterweights, harmonic mounts and observatory piers. Each comes in brand
+  colours on a matching photo, aluminium, steel or carbon tripod. Refractors have dew shields and focusers,
+  Newtonians have open tubes, spiders and side focusers, and SCT/Mak/RASA/RC tubes are drawn as they really
+  are. The imaging train shows reducers, filter wheels, guide scopes and the EAF, and a USB cable follows the scope.
+- **A real camp.** Roll-top table, laptop with keyboard, red lantern, thermos and star atlas, a camp chair
+  (sit back and stargaze), gear cases and a power station when you own one.
+- **Living scenery.** Rolling terrain, wind-swayed grass with dry palettes for deserts and mountains, new
+  trees, a proper house with lit windows, a board fence and cars.
+- **Binoculars (B)** with a twin-eyepiece view and zoom, a faint-star field and deep-sky glows (M31, M42, the
+  Magellanic Clouds) whose visibility follows sky brightness. **Constellations (C)**, and a **green laser (L)**.
+
 ## New in 0.2 – 0.3
 - **Real gear**: ~100 products from ZWO, Sky-Watcher, Celestron, Canon, Nikon, Sony, Samyang, Sigma, William Optics,
   Askar, Takahashi, iOptron, Rainbow Astro, Optolong, Antlia, QHY, Player One… AstroMart groups them by brand or type.
@@ -114,7 +127,8 @@ An internet connection is needed for sky imagery, catalogs and maps.
 
 ## Controls (outside)
 Click to look around · WASD walk · compass & sky markers show the target and where the scope points · **E** interact (lens cap, grab & aim the rig, focus, polar bolts,
-sit at laptop) · **R** rig controls · **F** red headlamp · **Tab** laptop ↔ outside.
+sit at laptop, sit in the camp chair) · **R** rig controls · **F** red headlamp · **B** binoculars (scroll to zoom) ·
+**C** constellation lines & star names · hold **L** for a green laser pointer (co-op friends see it too) · **Tab** laptop ↔ outside.
 
 ## Data credits
 CDS Strasbourg (hips2fits, Sesame, DSS2 color & Mellinger HiPS), NASA GIBS (VIIRS Black Marble,

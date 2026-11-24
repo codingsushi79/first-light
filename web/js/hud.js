@@ -21,7 +21,9 @@ export function createHud(root, cb) {
   const sess = h('div', { class: 'hp hud-sess' });
   const prompt = h('div', { class: 'hud-prompt' });
   const xh = h('div', { class: 'hud-xhair' });
-  const hint = h('div', { class: 'hud-hint' }, 'CLICK look · WASD walk · E interact · R rig controls · F headlamp · , . warp · TAB laptop · ENTER chat · F2 hide HUD');
+  const hint = h('div', { class: 'hud-hint' }, 'CLICK look · WASD walk · E interact · R rig · F headlamp · B binoculars · C constellations · hold L laser · , . warp · TAB laptop · F2 hide HUD');
+  const bino = h('div', { class: 'hud-bino' }, h('div', { class: 'hud-bino-read mono' }));
+  const toastEl = h('div', { class: 'hud-flash' });
   const chatLog = h('div', { class: 'chat-log' });
   const chatIn = h('input', { class: 'chat-in', placeholder: 'Say something to your team…', maxlength: 300 });
   const chat = h('div', { class: 'hud-chat' }, chatLog, chatIn);
@@ -33,7 +35,7 @@ export function createHud(root, cb) {
     compassTape.append(h('span', { class: 'ct' + (d % 15 === 0 ? ' major' : '') + (lab ? ' cd' : ''), style: { left: `${(d + 360) * 4}px` } }, d % 15 === 0 ? (lab || String(((d % 360) + 360) % 360)) : ''));
   }
   const markers = h('div', { class: 'hud-markers' });
-  const el = h('div', { class: 'hud' }, top, compass, markers, warn, rig, sess, xh, prompt, hint, chat);
+  const el = h('div', { class: 'hud' }, bino, top, compass, markers, warn, rig, sess, xh, prompt, hint, chat, toastEl);
   root.append(el);
 
   chatIn.addEventListener('keydown', (e) => {
@@ -143,6 +145,11 @@ export function createHud(root, cb) {
     el, update, updateView,
     setPrompt(t) { prompt.textContent = t || ''; prompt.style.display = t ? '' : 'none'; },
     setGrab(g) { el.classList.toggle('grabbing', g); },
+    setBino(fov) {
+      el.classList.toggle('bino-on', !!fov);
+      if (fov) { const mag = Math.round(52 / fov); bino.firstChild.textContent = `${mag}×${mag >= 12 ? 70 : 50} BINOCULARS · ${fov.toFixed(1)}° FIELD · SCROLL TO ZOOM · B TO LOWER`; }
+    },
+    flash(t) { toastEl.textContent = t; toastEl.classList.remove('show'); void toastEl.offsetWidth; toastEl.classList.add('show'); },
     openChat() { chat.style.display = ''; chat.classList.add('typing'); chatIn.focus(); },
   };
 }
